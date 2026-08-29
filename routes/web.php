@@ -19,3 +19,4 @@ Route::middleware('auth')->group(function () {
 
 require __DIR__.'/auth.php';
 require __DIR__.'/dashboard-laporan.php';
+require __DIR__.'/pengguna.php';
