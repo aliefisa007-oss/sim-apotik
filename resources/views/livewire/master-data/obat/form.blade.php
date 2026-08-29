@@ -121,9 +121,15 @@
         {{-- Status --}}
         <section class="rounded-md border border-slate-200 p-4">
             <h2 class="mb-3 text-sm font-semibold text-slate-700">Status</h2>
-            <div class="flex items-center gap-2">
+            <div class="mb-3 flex items-center gap-2">
                 <input type="checkbox" wire:model="is_active" id="is_active" class="rounded border-slate-300">
                 <label for="is_active" class="text-sm text-slate-700">Obat aktif</label>
+            </div>
+            <div class="max-w-xs">
+                <label class="mb-1 block text-xs font-medium text-slate-600">Ambang Stok Menipis</label>
+                <input type="number" min="0" wire:model="stok_minimum" class="w-full rounded-md border-slate-300 text-sm">
+                <p class="mt-1 text-xs text-slate-400">Dipakai Laporan Stok untuk menandai obat yang perlu segera dipesan ulang.</p>
+                @error('stok_minimum') <p class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
             </div>
         </section>
 

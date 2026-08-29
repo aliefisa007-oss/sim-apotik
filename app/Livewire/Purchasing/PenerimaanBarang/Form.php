@@ -1,5 +1,7 @@
 <?php
 
+<?php
+
 namespace App\Livewire\Purchasing\PenerimaanBarang;
 
 use App\Models\BatchObat;

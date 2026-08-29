@@ -38,11 +38,13 @@ class Obat extends Model
         'butuh_resep',
         'deskripsi',
         'is_active',
+        'stok_minimum',
     ];
 
     protected $casts = [
         'butuh_resep' => 'boolean',
         'is_active' => 'boolean',
+        'stok_minimum' => 'integer',
     ];
 
     public function kategori(): BelongsTo
@@ -58,6 +60,11 @@ class Obat extends Model
     public function obatSatuan(): HasMany
     {
         return $this->hasMany(ObatSatuan::class);
+    }
+
+    public function batchObat(): HasMany
+    {
+        return $this->hasMany(BatchObat::class, 'obat_id');
     }
 
     /**

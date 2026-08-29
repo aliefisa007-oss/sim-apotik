@@ -21,6 +21,7 @@ class Form extends Component
     public bool $butuh_resep = false;
     public string $deskripsi = '';
     public bool $is_active = true;
+    public int $stok_minimum = 10;
 
     /** @var array<int, array{satuan_id: ?int, konversi_ke_satuan_dasar: int, is_satuan_dasar: bool, is_satuan_jual_default: bool}> */
     public array $satuanRows = [];
@@ -39,6 +40,7 @@ class Form extends Component
             $this->butuh_resep = $obat->butuh_resep;
             $this->deskripsi = (string) $obat->deskripsi;
             $this->is_active = $obat->is_active;
+            $this->stok_minimum = $obat->stok_minimum;
 
             $this->satuanRows = $obat->obatSatuan->map(fn ($row) => [
                 'satuan_id' => $row->satuan_id,
@@ -97,6 +99,7 @@ class Form extends Component
             'butuh_resep' => ['boolean'],
             'deskripsi' => ['nullable', 'string'],
             'is_active' => ['boolean'],
+            'stok_minimum' => ['required', 'integer', 'min:0'],
 
             'satuanRows' => ['required', 'array', 'min:1'],
             'satuanRows.*.satuan_id' => ['required', 'distinct', 'exists:satuan,id'],
@@ -125,6 +128,7 @@ class Form extends Component
             'butuh_resep' => $this->butuh_resep,
             'deskripsi' => $this->deskripsi ?: null,
             'is_active' => $this->is_active,
+            'stok_minimum' => $this->stok_minimum,
         ];
 
         try {
