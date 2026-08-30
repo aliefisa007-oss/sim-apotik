@@ -9,7 +9,7 @@ use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
 
-#[Layout('components.layouts.guest')]
+#[Layout('layouts.guest')]
 class Login extends Component
 {
     public string $email = '';
@@ -44,7 +44,7 @@ class Login extends Component
         RateLimiter::clear($throttleKey);
         request()->session()->regenerate();
 
-        $this->redirect('/', navigate: true);
+        $this->redirect(route('dashboard'), navigate: true);
     }
 
     public function render()

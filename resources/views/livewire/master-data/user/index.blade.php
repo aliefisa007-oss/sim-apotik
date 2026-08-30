@@ -106,7 +106,7 @@
                     </div>
                     <div class="flex justify-end gap-2 pt-2">
                         <button type="button" wire:click="$set('showModal', false)" class="rounded-md px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100">Batal</button>
-                        <button type="submit" class="rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700">Simpan</button>
+                        <button type="submit" wire:loading.attr="disabled" wire:target="save" wire:loading.class="opacity-60 cursor-wait" class="rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700">Simpan</button>
                     </div>
                 </form>
             </div>

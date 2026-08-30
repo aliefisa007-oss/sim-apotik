@@ -67,7 +67,7 @@
 
             @error('preview') <p class="text-xs text-red-600">{{ $message }}</p> @enderror
 
-            <button type="submit" class="w-full rounded-md bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
+            <button type="submit" wire:loading.attr="disabled" wire:target="save" wire:loading.class="opacity-60 cursor-wait" class="w-full rounded-md bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
                 Simpan Harga Jual
             </button>
         </form>

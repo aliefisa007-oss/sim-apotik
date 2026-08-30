@@ -134,7 +134,7 @@
         </section>
 
         <div class="flex items-center gap-3">
-            <button type="submit" class="rounded-md bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
+            <button type="submit" wire:loading.attr="disabled" wire:target="save" wire:loading.class="opacity-60 cursor-wait" class="rounded-md bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
                 Simpan
             </button>
             <a href="{{ route('obat.index') }}" class="text-sm text-slate-500 hover:text-slate-700">Batal</a>

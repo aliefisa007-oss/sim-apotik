@@ -71,6 +71,7 @@
 
     <div class="no-print center" style="margin-top: 12px;">
         <button onclick="window.print()">Cetak</button>
+        <a href="{{ route('penjualan.kasir') }}" style="margin-left: 8px;">Transaksi Baru</a>
     </div>
 
     <script>

@@ -8,12 +8,13 @@ use Tests\TestCase;
 class ExampleTest extends TestCase
 {
     /**
-     * A basic test example.
+     * '/' mengarahkan ke dashboard (lihat routes/web.php) — ini aplikasi
+     * internal, bukan produk dengan landing page publik.
      */
-    public function test_the_application_returns_a_successful_response(): void
+    public function test_the_application_redirects_root_to_dashboard(): void
     {
         $response = $this->get('/');
 
-        $response->assertStatus(200);
+        $response->assertRedirect(route('dashboard', absolute: false));
     }
 }

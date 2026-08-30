@@ -3,13 +3,21 @@
 use App\Http\Controllers\ProfileController;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/', function () {
-    return view('welcome');
-});
+// '/' diarahkan langsung ke dashboard — ini aplikasi internal apotek,
+// bukan produk dengan landing page publik, jadi welcome page bawaan
+// starter kit Laravel tidak relevan di sini. Tamu (belum login) akan
+// otomatis dilempar ke halaman login oleh middleware 'auth' di route
+// dashboard (lihat routes/dashboard-laporan.php).
+Route::get('/', fn () => redirect()->route('dashboard'));
 
-Route::get('/dashboard', function () {
-    return view('dashboard');
-})->middleware(['auth', 'verified'])->name('dashboard');
+// CATATAN: route 'dashboard' yang SEBENARNYA (Livewire DashboardIndex,
+// hasil Phase 7) didaftarkan di routes/dashboard-laporan.php. Dulu di
+// sini ada route '/dashboard' duplikat yang mengembalikan
+// view('dashboard') statis — karena didaftarkan lebih dulu di
+// RouteCollection, Laravel selalu men-serve versi statis itu untuk
+// GET /dashboard, sehingga dashboard Livewire yang sebenarnya (dengan
+// laporan & grafik) TIDAK PERNAH benar-benar terbuka lewat menu mana
+// pun. Route duplikat itu sudah dihapus di sini.
 
 Route::middleware('auth')->group(function () {
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
