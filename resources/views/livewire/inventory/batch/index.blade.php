@@ -2,12 +2,12 @@
     <h1 class="mb-4 text-lg font-semibold text-slate-800">Batch Obat</h1>
 
     <select
-        onchange="window.location.href = '{{ route('batch.index') }}?obat_id=' + this.value"
+        wire:model.live="obat_id"
         class="mb-4 w-96 rounded-md border-slate-300 text-sm"
     >
         <option value="">-- Pilih Obat --</option>
         @foreach ($obatOptions as $option)
-            <option value="{{ $option->id }}" {{ $obat && $obat->id === $option->id ? 'selected' : '' }}>
+            <option value="{{ $option->id }}">
                 {{ $option->kode_obat }} — {{ $option->nama_obat }}
             </option>
         @endforeach

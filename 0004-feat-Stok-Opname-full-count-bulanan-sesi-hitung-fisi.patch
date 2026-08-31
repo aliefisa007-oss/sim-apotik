@@ -1,0 +1,1437 @@
+From ad38e1f09b5afb64b25f44bea7c7006333f8928f Mon Sep 17 00:00:00 2001
+From: Alief <alief@sim-apotik.local>
+Date: Sun, 30 Aug 2026 06:46:29 +0000
+Subject: [PATCH 4/4] =?UTF-8?q?feat:=20Stok=20Opname=20(full=20count=20bul?=
+ =?UTF-8?q?anan)=20=E2=80=94=20sesi,=20hitung=20fisik,=20finalisasi=20dual?=
+ =?UTF-8?q?-control,=20laporan=20selisih?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Modul baru untuk proses stock opname yang sebelumnya cuma didukung
+lewat form Penyesuaian Stok satu-batch-satu-kali tanpa konsep sesi,
+approval, atau laporan. Digunakan untuk full count bulanan (dikonfirmasi
+alurnya oleh Alief: dilakukan tiap akhir bulan, mencakup semua item).
+
+ARSITEKTUR:
+- stok_opname (sesi): kode_opname (OPN-YYYYMM-0001, sequential per
+  bulan — pola sama dengan no_resep RSP-YYYYMMDD-0001 di ResepService),
+  status berjalan/selesai/dibatalkan.
+- detail_stok_opname (per batch): snapshot stok_sistem DAN
+  harga_beli_saat_opname pada momen sesi dibuat — snapshot harga sengaja
+  ditambahkan supaya nilai rupiah selisih di laporan tidak bergeser
+  kalau batch di-restock harga beda setelah opname selesai (masalah
+  yang sama persis dengan keterbatasan HPP yang sudah dicatat di
+  LaporanKeuanganService, sengaja dihindari di sini).
+- StokOpnameService TIDAK menulis KartuStok/stok_saat_ini secara
+  langsung — saat selesaikanOpname(), setiap item yang selisih != 0
+  didelegasikan ke StockService::adjustStock() yang sudah ada (satu-
+  satunya layer yang boleh mutasi stok riil). DB::transaction
+  bersarang (Laravel pakai SAVEPOINT otomatis untuk MySQL/MariaDB)
+  memastikan finalisasi atomic: kalau satu item gagal disesuaikan,
+  semua rollback.
+
+KEPUTUSAN YANG DIAMBIL (open decisions, flagged eksplisit):
+1. Full count generate SEMUA batch aktif+habis (exclude expired) saat
+   sesi dibuat — user tidak perlu pilih item manual. Filter sama
+   dengan Penyesuaian Stok yang sudah ada.
+2. Hanya SATU sesi 'berjalan' boleh ada di satu waktu — mencegah dua
+   opname tumpang tindih membingungkan siapa bertanggung jawab atas
+   selisih mana.
+3. Dual control: mulai sesi + catat hasil hitung = owner/admin/gudang
+   (sama dengan BatchObatPolicy::create, yang juga men-gate Stok
+   Masuk & Penyesuaian). SELESAIKAN opname (yang memicu penyesuaian
+   stok riil) DIBATASI owner/admin saja — konsisten dengan pola void
+   transaksi penjualan (TransaksiPenjualanPolicy::void). Staf gudang
+   yang menghitung fisik BUKAN yang menyetujui jadi perubahan resmi.
+4. selesaikanOpname() menolak kalau masih ada item stok_fisik null —
+   tidak ada auto-skip/auto-anggap-sesuai untuk item yang belum
+   sempat dihitung, harus eksplisit diisi (termasuk kalau sama dengan
+   stok sistem).
+5. Kategori selisih masih minimal (cuma teks bebas 'catatan' per
+   item, bukan taksonomi rusak/hilang/kadaluarsa) — prioritas sesi ini
+   sesuai arahan Alief adalah sesi + laporan, bukan kategorisasi
+   detail. Kandidat enhancement phase berikutnya kalau dibutuhkan.
+6. Belum ada approval/dual-sign digital selain gate role finalize —
+   laporan cetak (resources/views/stok-opname/cetak.blade.php, A4,
+   pola sama dengan struk 58mm yang sudah ada) menyediakan baris
+   tanda tangan fisik 'Dihitung oleh' / 'Disetujui oleh' sebagai
+   pelengkap kalau memang perlu bukti fisik.
+
+UI:
+- Index: daftar sesi + tombol mulai (disabled kalau masih ada yang
+  berjalan) + batalkan.
+- Show: tabel semua item dengan input stok fisik inline (wire:change
+  auto-save per baris, TIDAK perlu submit form besar sekali di akhir
+  — penting untuk full count yang bisa ratusan item), ringkasan live
+  (total/sudah dihitung/sesuai/lebih/kurang/nilai rupiah selisih),
+  tombol Selesaikan (disabled sampai semua item dihitung) & Batalkan.
+- Nav: masuk grup dropdown Inventory (desktop + mobile).
+- Proteksi double-submit (wire:loading) & wire:confirm pada aksi
+  selesaikan/batalkan — konsisten pola yang sudah dibangun sesi
+  sebelumnya.
+
+TEST: StokOpnameServiceTest (snapshot scope, single-active-session
+guard, validasi belum-lengkap, penyesuaian stok cuma untuk item
+selisih, batalkan tidak sentuh stok, validasi stok fisik negatif) +
+StokOpnameLivewireTest (gating role per aksi, alur end-to-end hitung
+sampai finalize). Full-repo PHP lint sweep bersih, balance Blade
+directive OK di semua file baru/berubah.
+---
+ app/Livewire/Inventory/StokOpname/Index.php   |  55 ++++++
+ app/Livewire/Inventory/StokOpname/Show.php    | 130 ++++++++++++++
+ app/Models/DetailStokOpname.php               |  70 ++++++++
+ app/Models/StokOpname.php                     |  64 +++++++
+ app/Policies/StokOpnamePolicy.php             |  49 ++++++
+ app/Services/StokOpnameService.php            | 163 ++++++++++++++++++
+ ..._08_30_000001_create_stok_opname_table.php |  48 ++++++
+ ...000002_create_detail_stok_opname_table.php |  50 ++++++
+ resources/views/layouts/navigation.blade.php  |   4 +-
+ .../inventory/stok-opname/index.blade.php     |  71 ++++++++
+ .../inventory/stok-opname/show.blade.php      | 148 ++++++++++++++++
+ resources/views/stok-opname/cetak.blade.php   | 102 +++++++++++
+ routes/stok-opname.php                        |  20 +++
+ routes/web.php                                |   1 +
+ .../Inventory/StokOpnameLivewireTest.php      |  93 ++++++++++
+ .../Inventory/StokOpnameServiceTest.php       | 140 +++++++++++++++
+ 16 files changed, 1207 insertions(+), 1 deletion(-)
+ create mode 100644 app/Livewire/Inventory/StokOpname/Index.php
+ create mode 100644 app/Livewire/Inventory/StokOpname/Show.php
+ create mode 100644 app/Models/DetailStokOpname.php
+ create mode 100644 app/Models/StokOpname.php
+ create mode 100644 app/Policies/StokOpnamePolicy.php
+ create mode 100644 app/Services/StokOpnameService.php
+ create mode 100644 database/migrations/2026_08_30_000001_create_stok_opname_table.php
+ create mode 100644 database/migrations/2026_08_30_000002_create_detail_stok_opname_table.php
+ create mode 100644 resources/views/livewire/inventory/stok-opname/index.blade.php
+ create mode 100644 resources/views/livewire/inventory/stok-opname/show.blade.php
+ create mode 100644 resources/views/stok-opname/cetak.blade.php
+ create mode 100644 routes/stok-opname.php
+ create mode 100644 tests/Feature/Inventory/StokOpnameLivewireTest.php
+ create mode 100644 tests/Feature/Inventory/StokOpnameServiceTest.php
+
+diff --git a/app/Livewire/Inventory/StokOpname/Index.php b/app/Livewire/Inventory/StokOpname/Index.php
+new file mode 100644
+index 0000000..be4e325
+--- /dev/null
++++ b/app/Livewire/Inventory/StokOpname/Index.php
+@@ -0,0 +1,55 @@
++<?php
++
++namespace App\Livewire\Inventory\StokOpname;
++
++use App\Models\StokOpname;
++use App\Services\StokOpnameService;
++use InvalidArgumentException;
++use Livewire\Component;
++use Livewire\WithPagination;
++
++class Index extends Component
++{
++    use WithPagination;
++
++    public function mount(): void
++    {
++        $this->authorize('viewAny', StokOpname::class);
++    }
++
++    public function mulai(StokOpnameService $service): void
++    {
++        $this->authorize('create', StokOpname::class);
++
++        try {
++            $opname = $service->mulaiOpname(auth()->id());
++        } catch (InvalidArgumentException $e) {
++            session()->flash('error', $e->getMessage());
++
++            return;
++        }
++
++        $this->redirectRoute('stok-opname.show', $opname, navigate: true);
++    }
++
++    public function batalkan(int $id, StokOpnameService $service): void
++    {
++        $opname = StokOpname::findOrFail($id);
++        $this->authorize('cancel', $opname);
++
++        $service->batalkanOpname($id);
++
++        session()->flash('success', "Sesi opname {$opname->kode_opname} dibatalkan.");
++    }
++
++    public function render()
++    {
++        return view('livewire.inventory.stok-opname.index', [
++            'opnameList' => StokOpname::withCount('detail')
++                ->with('pembuat')
++                ->orderByDesc('id')
++                ->paginate(15),
++            'adaSesiBerjalan' => StokOpname::where('status', StokOpname::STATUS_BERJALAN)->exists(),
++        ]);
++    }
++}
+diff --git a/app/Livewire/Inventory/StokOpname/Show.php b/app/Livewire/Inventory/StokOpname/Show.php
+new file mode 100644
+index 0000000..8ca7ab2
+--- /dev/null
++++ b/app/Livewire/Inventory/StokOpname/Show.php
+@@ -0,0 +1,130 @@
++<?php
++
++namespace App\Livewire\Inventory\StokOpname;
++
++use App\Models\DetailStokOpname;
++use App\Models\StokOpname;
++use App\Services\StockService;
++use App\Services\StokOpnameService;
++use InvalidArgumentException;
++use Livewire\Component;
++use Livewire\WithPagination;
++use RuntimeException;
++
++class Show extends Component
++{
++    use WithPagination;
++
++    public StokOpname $opname;
++
++    public string $search = '';
++
++    /**
++     * Input stok fisik per baris, di-key oleh detail_id — supaya semua
++     * baris di halaman saat ini bisa diisi lalu disimpan satu-satu lewat
++     * wire:change tanpa reload seluruh tabel per input.
++     */
++    public array $stokFisikInput = [];
++
++    public array $catatanInput = [];
++
++    public function mount(StokOpname $opname): void
++    {
++        $this->authorize('view', $opname);
++        $this->opname = $opname;
++    }
++
++    public function updatingSearch(): void
++    {
++        $this->resetPage();
++    }
++
++    public function simpanHitung(int $detailId, StokOpnameService $service): void
++    {
++        $this->authorize('create', StokOpname::class);
++
++        $stokFisik = $this->stokFisikInput[$detailId] ?? null;
++
++        if ($stokFisik === null || $stokFisik === '') {
++            return;
++        }
++
++        try {
++            $service->catatHasilHitung(
++                $detailId,
++                (int) $stokFisik,
++                auth()->id(),
++                $this->catatanInput[$detailId] ?? null
++            );
++        } catch (InvalidArgumentException $e) {
++            $this->addError("stokFisikInput.{$detailId}", $e->getMessage());
++
++            return;
++        }
++
++        $this->opname->refresh();
++    }
++
++    public function selesaikan(StokOpnameService $service, StockService $stockService): void
++    {
++        $this->authorize('finalize', $this->opname);
++
++        try {
++            $this->opname = $service->selesaikanOpname($this->opname->id, auth()->id(), $stockService);
++        } catch (RuntimeException|InvalidArgumentException $e) {
++            session()->flash('error', $e->getMessage());
++
++            return;
++        }
++
++        session()->flash('success', "Opname {$this->opname->kode_opname} selesai. Stok riil sudah disesuaikan untuk item yang selisih.");
++    }
++
++    public function batalkan(StokOpnameService $service): void
++    {
++        $this->authorize('cancel', $this->opname);
++
++        $this->opname = $service->batalkanOpname($this->opname->id);
++
++        session()->flash('success', "Sesi opname {$this->opname->kode_opname} dibatalkan.");
++
++        $this->redirectRoute('stok-opname.index', navigate: true);
++    }
++
++    public function render()
++    {
++        $detailQuery = DetailStokOpname::where('stok_opname_id', $this->opname->id)
++            ->with(['batchObat.obat', 'penghitung']);
++
++        if ($this->search) {
++            $detailQuery->whereHas('batchObat.obat', fn ($q) => $q->where('nama_obat', 'like', "%{$this->search}%")
++                ->orWhere('kode_obat', 'like', "%{$this->search}%"))
++                ->orWhereHas('batchObat', fn ($q) => $q->where('no_batch', 'like', "%{$this->search}%"));
++        }
++
++        $detailList = $detailQuery->orderBy('id')->paginate(25);
++
++        foreach ($detailList as $detail) {
++            if (!array_key_exists($detail->id, $this->stokFisikInput)) {
++                $this->stokFisikInput[$detail->id] = $detail->stok_fisik;
++                $this->catatanInput[$detail->id] = $detail->catatan;
++            }
++        }
++
++        // Ringkasan dihitung dari SELURUH item sesi (bukan hanya halaman
++        // saat ini) — query terpisah tanpa pagination.
++        $semuaDetail = DetailStokOpname::where('stok_opname_id', $this->opname->id)->get();
++
++        return view('livewire.inventory.stok-opname.show', [
++            'detailList' => $detailList,
++            'ringkasan' => [
++                'total' => $semuaDetail->count(),
++                'sudah_dihitung' => $semuaDetail->whereNotNull('stok_fisik')->count(),
++                'sesuai' => $semuaDetail->filter(fn ($d) => $d->stok_fisik !== null && $d->selisih === 0)->count(),
++                'lebih' => $semuaDetail->filter(fn ($d) => $d->stok_fisik !== null && $d->selisih > 0)->count(),
++                'kurang' => $semuaDetail->filter(fn ($d) => $d->stok_fisik !== null && $d->selisih < 0)->count(),
++                'nilai_selisih' => $semuaDetail->filter(fn ($d) => $d->stok_fisik !== null)->sum(fn ($d) => (float) $d->nilai_selisih),
++            ],
++        ]);
++    }
++}
+diff --git a/app/Models/DetailStokOpname.php b/app/Models/DetailStokOpname.php
+new file mode 100644
+index 0000000..777b3cb
+--- /dev/null
++++ b/app/Models/DetailStokOpname.php
+@@ -0,0 +1,70 @@
++<?php
++
++namespace App\Models;
++
++use Illuminate\Database\Eloquent\Factories\HasFactory;
++use Illuminate\Database\Eloquent\Model;
++use Illuminate\Database\Eloquent\Relations\BelongsTo;
++
++class DetailStokOpname extends Model
++{
++    use HasFactory;
++
++    protected $table = 'detail_stok_opname';
++
++    protected $fillable = [
++        'stok_opname_id',
++        'batch_obat_id',
++        'stok_sistem',
++        'stok_fisik',
++        'harga_beli_saat_opname',
++        'catatan',
++        'dihitung_oleh',
++        'dihitung_pada',
++    ];
++
++    protected $casts = [
++        'stok_sistem' => 'integer',
++        'stok_fisik' => 'integer',
++        'harga_beli_saat_opname' => 'decimal:2',
++        'dihitung_pada' => 'datetime',
++    ];
++
++    public function stokOpname(): BelongsTo
++    {
++        return $this->belongsTo(StokOpname::class);
++    }
++
++    public function batchObat(): BelongsTo
++    {
++        return $this->belongsTo(BatchObat::class);
++    }
++
++    public function penghitung(): BelongsTo
++    {
++        return $this->belongsTo(User::class, 'dihitung_oleh');
++    }
++
++    public function getSelisihAttribute(): ?int
++    {
++        if ($this->stok_fisik === null) {
++            return null;
++        }
++
++        return $this->stok_fisik - $this->stok_sistem;
++    }
++
++    public function getNilaiSelisihAttribute(): ?string
++    {
++        if ($this->selisih === null) {
++            return null;
++        }
++
++        return bcmul((string) $this->selisih, (string) $this->harga_beli_saat_opname, 2);
++    }
++
++    public function getSudahDihitungAttribute(): bool
++    {
++        return $this->stok_fisik !== null;
++    }
++}
+diff --git a/app/Models/StokOpname.php b/app/Models/StokOpname.php
+new file mode 100644
+index 0000000..d992bf5
+--- /dev/null
++++ b/app/Models/StokOpname.php
+@@ -0,0 +1,64 @@
++<?php
++
++namespace App\Models;
++
++use Illuminate\Database\Eloquent\Factories\HasFactory;
++use Illuminate\Database\Eloquent\Model;
++use Illuminate\Database\Eloquent\Relations\BelongsTo;
++use Illuminate\Database\Eloquent\Relations\HasMany;
++
++class StokOpname extends Model
++{
++    use HasFactory;
++
++    protected $table = 'stok_opname';
++
++    public const STATUS_BERJALAN = 'berjalan';
++    public const STATUS_SELESAI = 'selesai';
++    public const STATUS_DIBATALKAN = 'dibatalkan';
++
++    protected $fillable = [
++        'kode_opname',
++        'tanggal_mulai',
++        'tanggal_selesai',
++        'status',
++        'dibuat_oleh',
++        'diselesaikan_oleh',
++        'catatan',
++    ];
++
++    protected $casts = [
++        'tanggal_mulai' => 'date',
++        'tanggal_selesai' => 'date',
++    ];
++
++    public function detail(): HasMany
++    {
++        return $this->hasMany(DetailStokOpname::class);
++    }
++
++    public function pembuat(): BelongsTo
++    {
++        return $this->belongsTo(User::class, 'dibuat_oleh');
++    }
++
++    public function penyelesai(): BelongsTo
++    {
++        return $this->belongsTo(User::class, 'diselesaikan_oleh');
++    }
++
++    public function getJumlahItemAttribute(): int
++    {
++        return $this->detail->count();
++    }
++
++    public function getJumlahSudahDihitungAttribute(): int
++    {
++        return $this->detail->whereNotNull('stok_fisik')->count();
++    }
++
++    public function getSudahLengkapAttribute(): bool
++    {
++        return $this->jumlah_item > 0 && $this->jumlah_sudah_dihitung === $this->jumlah_item;
++    }
++}
+diff --git a/app/Policies/StokOpnamePolicy.php b/app/Policies/StokOpnamePolicy.php
+new file mode 100644
+index 0000000..0818c38
+--- /dev/null
++++ b/app/Policies/StokOpnamePolicy.php
+@@ -0,0 +1,49 @@
++<?php
++
++namespace App\Policies;
++
++use App\Models\StokOpname;
++use App\Models\User;
++
++class StokOpnamePolicy
++{
++    public function viewAny(User $user): bool
++    {
++        return true;
++    }
++
++    public function view(User $user, StokOpname $stokOpname): bool
++    {
++        return true;
++    }
++
++    /**
++     * Mulai sesi opname & catat hasil hitung fisik — sama dengan siapa yang
++     * boleh mencatat Stok Masuk/Penyesuaian (BatchObatPolicy::create).
++     */
++    public function create(User $user): bool
++    {
++        return $user->hasRole('owner') || $user->hasRole('admin') || $user->hasRole('gudang');
++    }
++
++    /**
++     * Selesaikan opname (memicu penyesuaian stok riil untuk semua item
++     * selisih) sengaja DIBATASI Owner/Admin — dual control antara yang
++     * menghitung fisik (bisa gudang) dan yang menyetujui hasilnya jadi
++     * perubahan stok resmi. Konsisten dengan pola void transaksi penjualan
++     * (TransaksiPenjualanPolicy::void).
++     */
++    public function finalize(User $user, StokOpname $stokOpname): bool
++    {
++        return $user->hasRole('owner') || $user->hasRole('admin');
++    }
++
++    /**
++     * Batalkan sesi (belum berdampak ke stok riil) — sama dengan yang
++     * boleh memulai, tidak perlu dual control seketat finalize.
++     */
++    public function cancel(User $user, StokOpname $stokOpname): bool
++    {
++        return $user->hasRole('owner') || $user->hasRole('admin') || $user->hasRole('gudang');
++    }
++}
+diff --git a/app/Services/StokOpnameService.php b/app/Services/StokOpnameService.php
+new file mode 100644
+index 0000000..625ae6f
+--- /dev/null
++++ b/app/Services/StokOpnameService.php
+@@ -0,0 +1,163 @@
++<?php
++
++namespace App\Services;
++
++use App\Models\BatchObat;
++use App\Models\DetailStokOpname;
++use App\Models\StokOpname;
++use Illuminate\Support\Facades\DB;
++use InvalidArgumentException;
++use RuntimeException;
++
++/**
++ * Orkestrasi sesi stok opname full-count. TIDAK menulis KartuStok/mengubah
++ * BatchObat::stok_saat_ini secara langsung — saat sesi diselesaikan, setiap
++ * item yang selisih di-delegasikan ke StockService::adjustStock() (satu-
++ * satunya layer yang boleh mutasi stok riil, lihat §StockService).
++ *
++ * Alur: mulaiOpname() snapshot SEMUA batch aktif+habis (bukan expired) pada
++ * momen itu -> catatHasilHitung() per item selama proses hitung fisik ->
++ * selesaikanOpname() WAJIB semua item sudah dihitung, baru menyesuaikan stok
++ * riil untuk item yang selisih != 0 dan mengunci sesi jadi 'selesai'.
++ */
++class StokOpnameService
++{
++    /**
++     * Mulai sesi opname baru. Hanya boleh ada SATU sesi berstatus 'berjalan'
++     * pada satu waktu (SENSIBLE DEFAULT — mencegah dua sesi opname tumpang
++     * tindih membingungkan siapa yang bertanggung jawab atas selisih mana).
++     */
++    public function mulaiOpname(int $userId, ?string $catatan = null): StokOpname
++    {
++        if (StokOpname::where('status', StokOpname::STATUS_BERJALAN)->exists()) {
++            throw new InvalidArgumentException('Masih ada sesi opname yang berjalan. Selesaikan atau batalkan dulu sebelum memulai sesi baru.');
++        }
++
++        return DB::transaction(function () use ($userId, $catatan) {
++            $opname = StokOpname::create([
++                'kode_opname' => $this->generateKodeOpname(),
++                'tanggal_mulai' => now()->toDateString(),
++                'status' => StokOpname::STATUS_BERJALAN,
++                'dibuat_oleh' => $userId,
++                'catatan' => $catatan,
++            ]);
++
++            // Full count: cakup semua batch yang masih diharapkan punya
++            // stok tercatat (aktif ATAU habis — batch habis tetap perlu
++            // diverifikasi fisik memang 0, bukan diasumsikan). Batch
++            // expired dikecualikan karena sudah di-write-off terpisah
++            // lewat ExpiryService, sama seperti filter di Penyesuaian Stok.
++            $batchList = BatchObat::where('status', '!=', BatchObat::STATUS_EXPIRED)->get();
++
++            foreach ($batchList as $batch) {
++                DetailStokOpname::create([
++                    'stok_opname_id' => $opname->id,
++                    'batch_obat_id' => $batch->id,
++                    'stok_sistem' => $batch->stok_saat_ini,
++                    'harga_beli_saat_opname' => $batch->harga_beli,
++                ]);
++            }
++
++            return $opname->fresh('detail');
++        });
++    }
++
++    /**
++     * Catat hasil hitung fisik untuk satu item. Belum menyentuh stok riil
++     * sama sekali — murni pencatatan sampai sesi diselesaikan.
++     */
++    public function catatHasilHitung(int $detailId, int $stokFisik, int $userId, ?string $catatan = null): DetailStokOpname
++    {
++        if ($stokFisik < 0) {
++            throw new InvalidArgumentException('Stok fisik tidak boleh negatif.');
++        }
++
++        $detail = DetailStokOpname::with('stokOpname')->findOrFail($detailId);
++
++        if ($detail->stokOpname->status !== StokOpname::STATUS_BERJALAN) {
++            throw new InvalidArgumentException('Sesi opname ini sudah tidak berjalan, tidak bisa mencatat hasil hitung baru.');
++        }
++
++        $detail->update([
++            'stok_fisik' => $stokFisik,
++            'catatan' => $catatan,
++            'dihitung_oleh' => $userId,
++            'dihitung_pada' => now(),
++        ]);
++
++        return $detail->fresh();
++    }
++
++    /**
++     * Selesaikan sesi opname: WAJIB semua item sudah dihitung. Setiap item
++     * dengan selisih != 0 disesuaikan lewat StockService::adjustStock()
++     * (mengunci baris batch, menulis KartuStok jenis 'penyesuaian' dengan
++     * keterangan merujuk ke kode_opname untuk traceability).
++     */
++    public function selesaikanOpname(int $opnameId, int $userId, StockService $stockService): StokOpname
++    {
++        return DB::transaction(function () use ($opnameId, $userId, $stockService) {
++            $opname = StokOpname::with('detail')->lockForUpdate()->findOrFail($opnameId);
++
++            if ($opname->status !== StokOpname::STATUS_BERJALAN) {
++                throw new InvalidArgumentException("Sesi opname {$opname->kode_opname} sudah tidak berjalan.");
++            }
++
++            $belumDihitung = $opname->detail->whereNull('stok_fisik')->count();
++
++            if ($belumDihitung > 0) {
++                throw new RuntimeException("Masih ada {$belumDihitung} item yang belum dihitung. Semua item wajib dihitung sebelum sesi bisa diselesaikan.");
++            }
++
++            foreach ($opname->detail as $item) {
++                if ($item->stok_fisik === $item->stok_sistem) {
++                    continue;
++                }
++
++                $keterangan = "Opname {$opname->kode_opname}" . ($item->catatan ? " — {$item->catatan}" : '');
++                $stockService->adjustStock($item->batch_obat_id, $item->stok_fisik, $userId, $keterangan);
++            }
++
++            $opname->update([
++                'status' => StokOpname::STATUS_SELESAI,
++                'tanggal_selesai' => now()->toDateString(),
++                'diselesaikan_oleh' => $userId,
++            ]);
++
++            return $opname->fresh(['detail.batchObat.obat', 'pembuat', 'penyelesai']);
++        });
++    }
++
++    /**
++     * Batalkan sesi opname yang keliru dibuat/tidak jadi dilanjutkan.
++     * Aman kapan saja selama status masih 'berjalan' — TIDAK ada dampak ke
++     * stok riil karena penyesuaian riil baru terjadi di selesaikanOpname().
++     */
++    public function batalkanOpname(int $opnameId): StokOpname
++    {
++        $opname = StokOpname::findOrFail($opnameId);
++
++        if ($opname->status !== StokOpname::STATUS_BERJALAN) {
++            throw new InvalidArgumentException("Sesi opname {$opname->kode_opname} sudah tidak berjalan.");
++        }
++
++        $opname->update(['status' => StokOpname::STATUS_DIBATALKAN]);
++
++        return $opname->fresh();
++    }
++
++    private function generateKodeOpname(): string
++    {
++        $bulan = now()->format('Ym');
++        $prefix = "OPN-{$bulan}-";
++
++        $last = StokOpname::where('kode_opname', 'like', "{$prefix}%")
++            ->lockForUpdate()
++            ->orderByDesc('id')
++            ->value('kode_opname');
++
++        $nextNumber = $last ? ((int) substr($last, -4)) + 1 : 1;
++
++        return $prefix . sprintf('%04d', $nextNumber);
++    }
++}
+diff --git a/database/migrations/2026_08_30_000001_create_stok_opname_table.php b/database/migrations/2026_08_30_000001_create_stok_opname_table.php
+new file mode 100644
+index 0000000..4bcd06c
+--- /dev/null
++++ b/database/migrations/2026_08_30_000001_create_stok_opname_table.php
+@@ -0,0 +1,48 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++return new class extends Migration
++{
++    public function up(): void
++    {
++        Schema::create('stok_opname', function (Blueprint $table) {
++            $table->id();
++
++            // Format OPN-YYYYMM-0001, sequential per bulan — cocok untuk
++            // full count bulanan (satu sesi per bulan pada praktiknya,
++            // tapi tidak dipaksa lewat constraint supaya tetap fleksibel
++            // kalau suatu saat perlu opname dadakan di bulan yang sama).
++            $table->string('kode_opname')->unique();
++
++            $table->date('tanggal_mulai');
++            $table->date('tanggal_selesai')->nullable();
++
++            // berjalan -> selesai (memicu penyesuaian stok riil via
++            // StockService) atau dibatalkan (sesi keliru dibuat, belum
++            // sempat diselesaikan, TIDAK berdampak ke stok karena
++            // penyesuaian riil baru terjadi saat selesaikan()).
++            $table->enum('status', ['berjalan', 'selesai', 'dibatalkan'])->default('berjalan');
++
++            $table->foreignId('dibuat_oleh')->constrained('users');
++
++            // Selesaikan opname (yang memicu penyesuaian stok riil)
++            // sengaja dibatasi Owner/Admin — dual control, konsisten
++            // dengan pola void transaksi penjualan (TransaksiPenjualanPolicy).
++            // Staf gudang yang menghitung fisik BUKAN yang menyetujui
++            // penyesuaian akhirnya.
++            $table->foreignId('diselesaikan_oleh')->nullable()->constrained('users');
++
++            $table->text('catatan')->nullable();
++
++            $table->timestamps();
++        });
++    }
++
++    public function down(): void
++    {
++        Schema::dropIfExists('stok_opname');
++    }
++};
+diff --git a/database/migrations/2026_08_30_000002_create_detail_stok_opname_table.php b/database/migrations/2026_08_30_000002_create_detail_stok_opname_table.php
+new file mode 100644
+index 0000000..7f7aa37
+--- /dev/null
++++ b/database/migrations/2026_08_30_000002_create_detail_stok_opname_table.php
+@@ -0,0 +1,50 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++return new class extends Migration
++{
++    public function up(): void
++    {
++        Schema::create('detail_stok_opname', function (Blueprint $table) {
++            $table->id();
++
++            $table->foreignId('stok_opname_id')->constrained('stok_opname')->cascadeOnDelete();
++            $table->foreignId('batch_obat_id')->constrained('batch_obat');
++
++            // Snapshot stok sistem SAAT SESI DIBUAT — bukan dihitung ulang
++            // real-time saat laporan dibuka, supaya angka pembanding tetap
++            // konsisten meskipun ada transaksi lain berjalan selama proses
++            // hitung fisik berlangsung.
++            $table->integer('stok_sistem');
++
++            // Null selama belum dihitung — dipakai untuk validasi "semua
++            // item sudah dihitung" sebelum sesi bisa diselesaikan.
++            $table->integer('stok_fisik')->nullable();
++
++            // Snapshot harga_beli SAAT SESI DIBUAT untuk nilai rupiah
++            // selisih di laporan — supaya nilai laporan tidak bergeser
++            // kalau batch di-restock harga beda setelah opname selesai
++            // (masalah yang sama seperti keterbatasan HPP di
++            // LaporanKeuanganService, sengaja dihindari di sini dengan
++            // snapshot eksplisit).
++            $table->decimal('harga_beli_saat_opname', 15, 2);
++
++            $table->text('catatan')->nullable();
++
++            $table->foreignId('dihitung_oleh')->nullable()->constrained('users');
++            $table->timestamp('dihitung_pada')->nullable();
++
++            $table->timestamps();
++
++            $table->unique(['stok_opname_id', 'batch_obat_id']);
++        });
++    }
++
++    public function down(): void
++    {
++        Schema::dropIfExists('detail_stok_opname');
++    }
++};
+diff --git a/resources/views/layouts/navigation.blade.php b/resources/views/layouts/navigation.blade.php
+index 378f3e4..900b914 100644
+--- a/resources/views/layouts/navigation.blade.php
++++ b/resources/views/layouts/navigation.blade.php
+@@ -21,11 +21,12 @@
+                         <x-dropdown-link :href="route('pasien.index')">Pasien</x-dropdown-link>
+                     </x-nav-dropdown>
+ 
+-                    <x-nav-dropdown label="Inventory" :active="request()->routeIs(['batch.*', 'stok-masuk.*', 'penyesuaian-stok.*', 'kartu-stok.*'])">
++                    <x-nav-dropdown label="Inventory" :active="request()->routeIs(['batch.*', 'stok-masuk.*', 'penyesuaian-stok.*', 'kartu-stok.*', 'stok-opname.*'])">
+                         <x-dropdown-link :href="route('batch.index')">Batch Obat</x-dropdown-link>
+                         <x-dropdown-link :href="route('stok-masuk.create')">Stok Masuk</x-dropdown-link>
+                         <x-dropdown-link :href="route('penyesuaian-stok.create')">Penyesuaian Stok</x-dropdown-link>
+                         <x-dropdown-link :href="route('kartu-stok.index')">Kartu Stok</x-dropdown-link>
++                        <x-dropdown-link :href="route('stok-opname.index')">Stok Opname</x-dropdown-link>
+                     </x-nav-dropdown>
+ 
+                     <x-nav-dropdown label="Penjualan" :active="request()->routeIs(['penjualan.*', 'resep.*'])">
+@@ -120,6 +121,7 @@
+             <x-responsive-nav-link :href="route('stok-masuk.create')" :active="request()->routeIs('stok-masuk.*')">Stok Masuk</x-responsive-nav-link>
+             <x-responsive-nav-link :href="route('penyesuaian-stok.create')" :active="request()->routeIs('penyesuaian-stok.*')">Penyesuaian Stok</x-responsive-nav-link>
+             <x-responsive-nav-link :href="route('kartu-stok.index')" :active="request()->routeIs('kartu-stok.*')">Kartu Stok</x-responsive-nav-link>
++            <x-responsive-nav-link :href="route('stok-opname.index')" :active="request()->routeIs('stok-opname.*')">Stok Opname</x-responsive-nav-link>
+         </div>
+ 
+         <div class="border-t border-slate-200 pb-3 pt-4">
+diff --git a/resources/views/livewire/inventory/stok-opname/index.blade.php b/resources/views/livewire/inventory/stok-opname/index.blade.php
+new file mode 100644
+index 0000000..d54ed15
+--- /dev/null
++++ b/resources/views/livewire/inventory/stok-opname/index.blade.php
+@@ -0,0 +1,71 @@
++<div>
++    @if (session('success'))
++        <div class="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800">{{ session('success') }}</div>
++    @endif
++    @if (session('error'))
++        <div class="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">{{ session('error') }}</div>
++    @endif
++
++    <div class="mb-4 flex items-center justify-between">
++        <h1 class="text-lg font-semibold text-slate-800">Stok Opname</h1>
++        @can('create', \App\Models\StokOpname::class)
++            @if (!$adaSesiBerjalan)
++                <button wire:click="mulai" wire:loading.attr="disabled" wire:target="mulai" wire:loading.class="opacity-60 cursor-wait" class="rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700">
++                    + Mulai Opname Bulan Ini
++                </button>
++            @else
++                <span class="text-xs text-slate-500">Masih ada sesi berjalan — selesaikan/batalkan dulu sebelum mulai sesi baru.</span>
++            @endif
++        @endcan
++    </div>
++
++    <div class="overflow-hidden rounded-md border border-slate-200">
++        <table class="min-w-full divide-y divide-slate-200 text-sm">
++            <thead class="bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
++                <tr>
++                    <th class="px-3 py-2">Kode</th>
++                    <th class="px-3 py-2">Tanggal Mulai</th>
++                    <th class="px-3 py-2">Dibuat Oleh</th>
++                    <th class="px-3 py-2 text-center">Item</th>
++                    <th class="px-3 py-2 text-center">Status</th>
++                    <th class="px-3 py-2 text-right">Aksi</th>
++                </tr>
++            </thead>
++            <tbody class="divide-y divide-slate-100">
++                @forelse ($opnameList as $opname)
++                    @php
++                        $statusStyles = [
++                            'berjalan' => 'bg-amber-100 text-amber-700',
++                            'selesai' => 'bg-emerald-100 text-emerald-700',
++                            'dibatalkan' => 'bg-slate-100 text-slate-500',
++                        ];
++                    @endphp
++                    <tr wire:key="opname-{{ $opname->id }}" class="hover:bg-slate-50">
++                        <td class="px-3 py-2 font-medium text-slate-800">{{ $opname->kode_opname }}</td>
++                        <td class="px-3 py-2 text-slate-600">{{ $opname->tanggal_mulai->format('d/m/Y') }}</td>
++                        <td class="px-3 py-2 text-slate-600">{{ $opname->pembuat->name }}</td>
++                        <td class="px-3 py-2 text-center text-slate-600">{{ $opname->detail_count }}</td>
++                        <td class="px-3 py-2 text-center">
++                            <span class="rounded-full px-2 py-0.5 text-xs font-medium {{ $statusStyles[$opname->status] }}">
++                                {{ ucfirst($opname->status) }}
++                            </span>
++                        </td>
++                        <td class="px-3 py-2 text-right">
++                            <a href="{{ route('stok-opname.show', $opname) }}" class="text-xs font-medium text-slate-600 hover:text-slate-900">
++                                {{ $opname->status === 'berjalan' ? 'Lanjutkan' : 'Lihat' }}
++                            </a>
++                        </td>
++                    </tr>
++                @empty
++                    <tr>
++                        <td colspan="6" class="px-3 py-10 text-center text-sm text-slate-500">
++                            Belum ada sesi opname.
++                        </td>
++                    </tr>
++                @endforelse
++            </tbody>
++        </table>
++    </div>
++
++    <div class="mt-3">{{ $opnameList->links() }}</div>
++</div>
+diff --git a/resources/views/livewire/inventory/stok-opname/show.blade.php b/resources/views/livewire/inventory/stok-opname/show.blade.php
+new file mode 100644
+index 0000000..ad36e77
+--- /dev/null
++++ b/resources/views/livewire/inventory/stok-opname/show.blade.php
+@@ -0,0 +1,148 @@
++<div>
++    @if (session('success'))
++        <div class="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800">{{ session('success') }}</div>
++    @endif
++    @if (session('error'))
++        <div class="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">{{ session('error') }}</div>
++    @endif
++
++    @php
++        $statusStyles = [
++            'berjalan' => 'bg-amber-100 text-amber-700',
++            'selesai' => 'bg-emerald-100 text-emerald-700',
++            'dibatalkan' => 'bg-slate-100 text-slate-500',
++        ];
++    @endphp
++
++    <div class="mb-4 flex items-center justify-between">
++        <div>
++            <h1 class="text-lg font-semibold text-slate-800">
++                Opname {{ $opname->kode_opname }}
++                <span class="ml-2 rounded-full px-2 py-0.5 text-xs font-medium {{ $statusStyles[$opname->status] }}">{{ ucfirst($opname->status) }}</span>
++            </h1>
++            <p class="text-xs text-slate-500">Mulai {{ $opname->tanggal_mulai->format('d/m/Y') }} oleh {{ $opname->pembuat->name }}</p>
++        </div>
++        <div class="flex items-center gap-2">
++            @if ($opname->status === 'selesai')
++                <a href="{{ route('stok-opname.cetak', $opname) }}" target="_blank" class="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
++                    Cetak Laporan
++                </a>
++            @endif
++            @if ($opname->status === 'berjalan')
++                @can('cancel', $opname)
++                    <button wire:click="batalkan" wire:confirm="Batalkan sesi opname {{ $opname->kode_opname }}? Semua hasil hitung yang sudah dicatat akan hilang." class="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50">
++                        Batalkan
++                    </button>
++                @endcan
++                @can('finalize', $opname)
++                    <button
++                        wire:click="selesaikan"
++                        wire:confirm="Selesaikan opname? Stok riil akan disesuaikan untuk semua item yang selisih dan TIDAK BISA dibatalkan lagi setelah ini."
++                        wire:loading.attr="disabled"
++                        wire:target="selesaikan"
++                        wire:loading.class="opacity-60 cursor-wait"
++                        @disabled(!$opname->sudah_lengkap)
++                        class="rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
++                    >
++                        Selesaikan Opname
++                    </button>
++                @endcan
++            @endif
++        </div>
++    </div>
++
++    {{-- Ringkasan --}}
++    <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-6">
++        <div class="rounded-md border border-slate-200 p-3">
++            <div class="text-xs text-slate-500">Total Item</div>
++            <div class="text-lg font-semibold text-slate-800">{{ $ringkasan['total'] }}</div>
++        </div>
++        <div class="rounded-md border border-slate-200 p-3">
++            <div class="text-xs text-slate-500">Sudah Dihitung</div>
++            <div class="text-lg font-semibold text-slate-800">{{ $ringkasan['sudah_dihitung'] }}/{{ $ringkasan['total'] }}</div>
++        </div>
++        <div class="rounded-md border border-slate-200 p-3">
++            <div class="text-xs text-slate-500">Sesuai</div>
++            <div class="text-lg font-semibold text-emerald-700">{{ $ringkasan['sesuai'] }}</div>
++        </div>
++        <div class="rounded-md border border-slate-200 p-3">
++            <div class="text-xs text-slate-500">Lebih</div>
++            <div class="text-lg font-semibold text-sky-700">{{ $ringkasan['lebih'] }}</div>
++        </div>
++        <div class="rounded-md border border-slate-200 p-3">
++            <div class="text-xs text-slate-500">Kurang</div>
++            <div class="text-lg font-semibold text-red-700">{{ $ringkasan['kurang'] }}</div>
++        </div>
++        <div class="rounded-md border border-slate-200 p-3">
++            <div class="text-xs text-slate-500">Nilai Selisih</div>
++            <div class="text-lg font-semibold {{ $ringkasan['nilai_selisih'] < 0 ? 'text-red-700' : 'text-slate-800' }}">
++                Rp{{ number_format($ringkasan['nilai_selisih'], 0, ',', '.') }}
++            </div>
++        </div>
++    </div>
++
++    <input type="text" wire:model.live.debounce.300ms="search" placeholder="Cari obat / no batch..."
++           class="mb-3 w-72 rounded-md border-slate-300 text-sm">
++
++    <div class="overflow-hidden rounded-md border border-slate-200">
++        <table class="min-w-full divide-y divide-slate-200 text-sm">
++            <thead class="bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
++                <tr>
++                    <th class="px-3 py-2">Obat</th>
++                    <th class="px-3 py-2">No. Batch</th>
++                    <th class="px-3 py-2 text-right">Stok Sistem</th>
++                    <th class="px-3 py-2 text-right">Stok Fisik</th>
++                    <th class="px-3 py-2 text-right">Selisih</th>
++                    <th class="px-3 py-2">Catatan</th>
++                    <th class="px-3 py-2">Dihitung Oleh</th>
++                </tr>
++            </thead>
++            <tbody class="divide-y divide-slate-100">
++                @forelse ($detailList as $detail)
++                    <tr wire:key="detail-{{ $detail->id }}" class="hover:bg-slate-50">
++                        <td class="px-3 py-2 text-slate-800">{{ $detail->batchObat->obat->nama_obat }}</td>
++                        <td class="px-3 py-2 text-slate-600">{{ $detail->batchObat->no_batch }}</td>
++                        <td class="px-3 py-2 text-right text-slate-600">{{ $detail->stok_sistem }}</td>
++                        <td class="px-3 py-2 text-right">
++                            @if ($opname->status === 'berjalan')
++                                <input
++                                    type="number"
++                                    min="0"
++                                    wire:model="stokFisikInput.{{ $detail->id }}"
++                                    wire:change="simpanHitung({{ $detail->id }})"
++                                    class="w-20 rounded-md border-slate-300 py-1 text-right text-sm"
++                                >
++                                @error("stokFisikInput.{$detail->id}") <p class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
++                            @else
++                                {{ $detail->stok_fisik ?? '-' }}
++                            @endif
++                        </td>
++                        <td class="px-3 py-2 text-right font-medium {{ $detail->selisih === null ? 'text-slate-400' : ($detail->selisih === 0 ? 'text-emerald-700' : ($detail->selisih > 0 ? 'text-sky-700' : 'text-red-700')) }}">
++                            {{ $detail->selisih === null ? '-' : ($detail->selisih > 0 ? '+' . $detail->selisih : $detail->selisih) }}
++                        </td>
++                        <td class="px-3 py-2">
++                            @if ($opname->status === 'berjalan')
++                                <input
++                                    type="text"
++                                    wire:model="catatanInput.{{ $detail->id }}"
++                                    wire:change="simpanHitung({{ $detail->id }})"
++                                    placeholder="opsional"
++                                    class="w-40 rounded-md border-slate-300 py-1 text-xs"
++                                >
++                            @else
++                                <span class="text-xs text-slate-500">{{ $detail->catatan ?? '-' }}</span>
++                            @endif
++                        </td>
++                        <td class="px-3 py-2 text-xs text-slate-500">{{ $detail->penghitung?->name ?? '-' }}</td>
++                    </tr>
++                @empty
++                    <tr>
++                        <td colspan="7" class="px-3 py-10 text-center text-sm text-slate-500">Tidak ada item yang cocok.</td>
++                    </tr>
++                @endforelse
++            </tbody>
++        </table>
++    </div>
++
++    <div class="mt-3">{{ $detailList->links() }}</div>
++</div>
+diff --git a/resources/views/stok-opname/cetak.blade.php b/resources/views/stok-opname/cetak.blade.php
+new file mode 100644
+index 0000000..85cc736
+--- /dev/null
++++ b/resources/views/stok-opname/cetak.blade.php
+@@ -0,0 +1,102 @@
++<!DOCTYPE html>
++<html lang="id">
++<head>
++    <meta charset="utf-8">
++    <title>Laporan Opname {{ $opname->kode_opname }}</title>
++    <style>
++        @page { margin: 15mm; size: A4; }
++        body {
++            margin: 0;
++            font-family: Arial, Helvetica, sans-serif;
++            font-size: 12px;
++            color: #111;
++        }
++        h1 { font-size: 16px; margin: 0 0 2px; }
++        .sub { color: #555; margin-bottom: 14px; }
++        table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
++        th, td { border: 1px solid #999; padding: 4px 6px; text-align: left; }
++        th { background: #f2f2f2; }
++        .right { text-align: right; }
++        .center { text-align: center; }
++        .ringkasan td { border: none; padding: 2px 10px 2px 0; }
++        .selisih-lebih { color: #0369a1; }
++        .selisih-kurang { color: #b91c1c; }
++        .ttd { margin-top: 40px; display: flex; justify-content: space-between; }
++        .ttd div { width: 45%; text-align: center; }
++        .ttd .garis { margin-top: 50px; border-top: 1px solid #333; padding-top: 4px; }
++        @media print {
++            .no-print { display: none; }
++        }
++    </style>
++</head>
++<body>
++    <div class="no-print" style="margin-bottom: 12px;">
++        <button onclick="window.print()">Cetak</button>
++    </div>
++
++    <h1>Laporan Stok Opname — {{ $opname->kode_opname }}</h1>
++    <div class="sub">
++        Periode: {{ $opname->tanggal_mulai->format('d/m/Y') }}
++        @if ($opname->tanggal_selesai) s/d {{ $opname->tanggal_selesai->format('d/m/Y') }} @endif
++        &nbsp;|&nbsp; Status: {{ ucfirst($opname->status) }}
++        &nbsp;|&nbsp; Dibuat oleh: {{ $opname->pembuat->name }}
++        @if ($opname->penyelesai) &nbsp;|&nbsp; Diselesaikan oleh: {{ $opname->penyelesai->name }} @endif
++    </div>
++
++    @php
++        $dihitung = $opname->detail->whereNotNull('stok_fisik');
++        $sesuai = $dihitung->filter(fn ($d) => $d->selisih === 0)->count();
++        $lebih = $dihitung->filter(fn ($d) => $d->selisih > 0)->count();
++        $kurang = $dihitung->filter(fn ($d) => $d->selisih < 0)->count();
++        $nilaiSelisih = $dihitung->sum(fn ($d) => (float) $d->nilai_selisih);
++    @endphp
++
++    <table class="ringkasan">
++        <tr>
++            <td><strong>Total Item:</strong> {{ $opname->detail->count() }}</td>
++            <td><strong>Sesuai:</strong> {{ $sesuai }}</td>
++            <td><strong>Lebih:</strong> {{ $lebih }}</td>
++            <td><strong>Kurang:</strong> {{ $kurang }}</td>
++            <td><strong>Nilai Selisih:</strong> Rp{{ number_format($nilaiSelisih, 0, ',', '.') }}</td>
++        </tr>
++    </table>
++
++    <table>
++        <thead>
++            <tr>
++                <th>Obat</th>
++                <th>No. Batch</th>
++                <th class="right">Stok Sistem</th>
++                <th class="right">Stok Fisik</th>
++                <th class="right">Selisih</th>
++                <th class="right">Nilai Selisih</th>
++                <th>Catatan</th>
++            </tr>
++        </thead>
++        <tbody>
++            @foreach ($opname->detail as $detail)
++                <tr>
++                    <td>{{ $detail->batchObat->obat->nama_obat }}</td>
++                    <td>{{ $detail->batchObat->no_batch }}</td>
++                    <td class="right">{{ $detail->stok_sistem }}</td>
++                    <td class="right">{{ $detail->stok_fisik ?? '-' }}</td>
++                    <td class="right {{ $detail->selisih > 0 ? 'selisih-lebih' : ($detail->selisih < 0 ? 'selisih-kurang' : '') }}">
++                        {{ $detail->selisih === null ? '-' : ($detail->selisih > 0 ? '+' . $detail->selisih : $detail->selisih) }}
++                    </td>
++                    <td class="right">{{ $detail->nilai_selisih === null ? '-' : 'Rp' . number_format((float) $detail->nilai_selisih, 0, ',', '.') }}</td>
++                    <td>{{ $detail->catatan ?? '-' }}</td>
++                </tr>
++            @endforeach
++        </tbody>
++    </table>
++
++    <div class="ttd">
++        <div>
++            <div class="garis">Dihitung oleh<br>({{ $opname->pembuat->name }})</div>
++        </div>
++        <div>
++            <div class="garis">Disetujui oleh<br>({{ $opname->penyelesai->name ?? '_________________' }})</div>
++        </div>
++    </div>
++</body>
++</html>
+diff --git a/routes/stok-opname.php b/routes/stok-opname.php
+new file mode 100644
+index 0000000..9f47a01
+--- /dev/null
++++ b/routes/stok-opname.php
+@@ -0,0 +1,20 @@
++<?php
++
++use App\Livewire\Inventory\StokOpname\Index as StokOpnameIndex;
++use App\Livewire\Inventory\StokOpname\Show as StokOpnameShow;
++use App\Models\StokOpname;
++use Illuminate\Support\Facades\Auth;
++use Illuminate\Support\Facades\Route;
++
++Route::middleware(['auth'])->group(function () {
++    Route::get('/stok-opname', StokOpnameIndex::class)->name('stok-opname.index');
++    Route::get('/stok-opname/{opname}', StokOpnameShow::class)->name('stok-opname.show');
++
++    Route::get('/stok-opname/{opname}/cetak', function (StokOpname $opname) {
++        abort_unless(Auth::user()->can('view', $opname), 403);
++
++        return view('stok-opname.cetak', [
++            'opname' => $opname->load(['detail.batchObat.obat', 'pembuat', 'penyelesai']),
++        ]);
++    })->name('stok-opname.cetak');
++});
+diff --git a/routes/web.php b/routes/web.php
+index 3c6a85e..ea236d9 100644
+--- a/routes/web.php
++++ b/routes/web.php
+@@ -28,3 +28,4 @@
+ require __DIR__.'/auth.php';
+ require __DIR__.'/dashboard-laporan.php';
+ require __DIR__.'/pengguna.php';
++require __DIR__.'/stok-opname.php';
+diff --git a/tests/Feature/Inventory/StokOpnameLivewireTest.php b/tests/Feature/Inventory/StokOpnameLivewireTest.php
+new file mode 100644
+index 0000000..1e30b7e
+--- /dev/null
++++ b/tests/Feature/Inventory/StokOpnameLivewireTest.php
+@@ -0,0 +1,93 @@
++<?php
++
++namespace Tests\Feature\Inventory;
++
++use App\Livewire\Inventory\StokOpname\Index as StokOpnameIndex;
++use App\Livewire\Inventory\StokOpname\Show as StokOpnameShow;
++use App\Models\BatchObat;
++use App\Models\User;
++use App\Services\StokOpnameService;
++use Database\Seeders\RoleSeeder;
++use Illuminate\Foundation\Testing\RefreshDatabase;
++use Livewire\Livewire;
++use Tests\TestCase;
++
++class StokOpnameLivewireTest extends TestCase
++{
++    use RefreshDatabase;
++
++    protected function setUp(): void
++    {
++        parent::setUp();
++        $this->seed(RoleSeeder::class);
++    }
++
++    private function user(string $role): User
++    {
++        $user = User::factory()->create();
++        $user->assignRole($role);
++
++        return $user;
++    }
++
++    public function test_kasir_tidak_bisa_mulai_opname(): void
++    {
++        $this->actingAs($this->user('kasir'));
++
++        Livewire::test(StokOpnameIndex::class)
++            ->call('mulai')
++            ->assertForbidden();
++    }
++
++    public function test_gudang_bisa_mulai_opname_dan_lanjut_hitung(): void
++    {
++        BatchObat::factory()->count(3)->create(['stok_saat_ini' => 20]);
++        $gudang = $this->user('gudang');
++        $this->actingAs($gudang);
++
++        Livewire::test(StokOpnameIndex::class)->call('mulai');
++
++        $opname = \App\Models\StokOpname::first();
++        $this->assertNotNull($opname);
++        $this->assertCount(3, $opname->detail);
++
++        $detail = $opname->detail->first();
++
++        Livewire::test(StokOpnameShow::class, ['opname' => $opname])
++            ->set("stokFisikInput.{$detail->id}", 20)
++            ->call('simpanHitung', $detail->id)
++            ->assertHasNoErrors();
++
++        $this->assertSame(20, $detail->fresh()->stok_fisik);
++    }
++
++    public function test_gudang_tidak_bisa_finalize_hanya_owner_admin(): void
++    {
++        BatchObat::factory()->create();
++        $gudang = $this->user('gudang');
++        $opname = app(StokOpnameService::class)->mulaiOpname($gudang->id);
++
++        $this->actingAs($gudang);
++
++        Livewire::test(StokOpnameShow::class, ['opname' => $opname])
++            ->call('selesaikan')
++            ->assertForbidden();
++    }
++
++    public function test_owner_bisa_finalize_setelah_semua_item_dihitung(): void
++    {
++        $batch = BatchObat::factory()->create(['stok_saat_ini' => 15]);
++        $owner = $this->user('owner');
++        $service = app(StokOpnameService::class);
++        $opname = $service->mulaiOpname($owner->id);
++        $service->catatHasilHitung($opname->detail->first()->id, 15, $owner->id);
++
++        $this->actingAs($owner);
++
++        Livewire::test(StokOpnameShow::class, ['opname' => $opname])
++            ->call('selesaikan')
++            ->assertHasNoErrors();
++
++        $this->assertSame('selesai', $opname->fresh()->status);
++    }
++}
+diff --git a/tests/Feature/Inventory/StokOpnameServiceTest.php b/tests/Feature/Inventory/StokOpnameServiceTest.php
+new file mode 100644
+index 0000000..f9e9025
+--- /dev/null
++++ b/tests/Feature/Inventory/StokOpnameServiceTest.php
+@@ -0,0 +1,140 @@
++<?php
++
++namespace Tests\Feature\Inventory;
++
++use App\Models\BatchObat;
++use App\Models\StokOpname;
++use App\Models\User;
++use App\Services\StockService;
++use App\Services\StokOpnameService;
++use Database\Seeders\RoleSeeder;
++use Illuminate\Foundation\Testing\RefreshDatabase;
++use InvalidArgumentException;
++use RuntimeException;
++use Tests\TestCase;
++
++class StokOpnameServiceTest extends TestCase
++{
++    use RefreshDatabase;
++
++    protected function setUp(): void
++    {
++        parent::setUp();
++        $this->seed(RoleSeeder::class);
++    }
++
++    private function gudangUser(): User
++    {
++        $user = User::factory()->create();
++        $user->assignRole('gudang');
++
++        return $user;
++    }
++
++    private function ownerUser(): User
++    {
++        $user = User::factory()->create();
++        $user->assignRole('owner');
++
++        return $user;
++    }
++
++    public function test_mulai_opname_snapshot_semua_batch_aktif_dan_habis_kecuali_expired(): void
++    {
++        $aktif = BatchObat::factory()->create(['stok_saat_ini' => 50, 'status' => BatchObat::STATUS_AKTIF]);
++        $habis = BatchObat::factory()->create(['stok_saat_ini' => 0, 'status' => BatchObat::STATUS_HABIS]);
++        $expired = BatchObat::factory()->expired()->create(['status' => BatchObat::STATUS_EXPIRED]);
++
++        $opname = app(StokOpnameService::class)->mulaiOpname($this->gudangUser()->id);
++
++        $batchIds = $opname->detail->pluck('batch_obat_id')->all();
++
++        $this->assertContains($aktif->id, $batchIds);
++        $this->assertContains($habis->id, $batchIds);
++        $this->assertNotContains($expired->id, $batchIds);
++        $this->assertStringStartsWith('OPN-'.now()->format('Ym').'-', $opname->kode_opname);
++    }
++
++    public function test_tidak_bisa_mulai_opname_baru_kalau_masih_ada_yang_berjalan(): void
++    {
++        $service = app(StokOpnameService::class);
++        BatchObat::factory()->create();
++
++        $service->mulaiOpname($this->gudangUser()->id);
++
++        $this->expectException(InvalidArgumentException::class);
++        $service->mulaiOpname($this->gudangUser()->id);
++    }
++
++    public function test_tidak_bisa_selesaikan_kalau_masih_ada_item_belum_dihitung(): void
++    {
++        BatchObat::factory()->count(2)->create();
++        $service = app(StokOpnameService::class);
++        $user = $this->ownerUser();
++
++        $opname = $service->mulaiOpname($user->id);
++
++        // Cuma catat hasil hitung untuk satu dari dua item.
++        $service->catatHasilHitung($opname->detail->first()->id, $opname->detail->first()->stok_sistem, $user->id);
++
++        $this->expectException(RuntimeException::class);
++        $service->selesaikanOpname($opname->id, $user->id, app(StockService::class));
++    }
++
++    public function test_selesaikan_opname_menyesuaikan_stok_riil_hanya_untuk_item_yang_selisih(): void
++    {
++        $sesuai = BatchObat::factory()->create(['stok_saat_ini' => 30]);
++        $kurang = BatchObat::factory()->create(['stok_saat_ini' => 30]);
++
++        $service = app(StokOpnameService::class);
++        $user = $this->ownerUser();
++        $opname = $service->mulaiOpname($user->id);
++
++        $detailSesuai = $opname->detail->firstWhere('batch_obat_id', $sesuai->id);
++        $detailKurang = $opname->detail->firstWhere('batch_obat_id', $kurang->id);
++
++        // Sesuai: stok fisik sama dengan stok sistem (30).
++        $service->catatHasilHitung($detailSesuai->id, 30, $user->id);
++        // Kurang: stok fisik cuma 25, selisih -5.
++        $service->catatHasilHitung($detailKurang->id, 25, $user->id, 'Kemasan rusak, dimusnahkan sebelumnya');
++
++        $result = $service->selesaikanOpname($opname->id, $user->id, app(StockService::class));
++
++        $this->assertSame(StokOpname::STATUS_SELESAI, $result->status);
++        $this->assertSame($user->id, $result->diselesaikan_oleh);
++
++        $this->assertSame(30, $sesuai->fresh()->stok_saat_ini);
++        $this->assertSame(25, $kurang->fresh()->stok_saat_ini);
++
++        // Kartu stok HANYA tercatat untuk batch yang benar-benar selisih.
++        $this->assertDatabaseMissing('kartu_stok', ['batch_id' => $sesuai->id, 'jenis_transaksi' => 'penyesuaian']);
++        $this->assertDatabaseHas('kartu_stok', ['batch_id' => $kurang->id, 'jenis_transaksi' => 'penyesuaian', 'jumlah' => -5]);
++    }
++
++    public function test_batalkan_opname_tidak_mengubah_stok_riil(): void
++    {
++        $batch = BatchObat::factory()->create(['stok_saat_ini' => 40]);
++        $service = app(StokOpnameService::class);
++        $user = $this->gudangUser();
++
++        $opname = $service->mulaiOpname($user->id);
++        $detail = $opname->detail->first();
++        $service->catatHasilHitung($detail->id, 10, $user->id);
++
++        $result = $service->batalkanOpname($opname->id);
++
++        $this->assertSame(StokOpname::STATUS_DIBATALKAN, $result->status);
++        $this->assertSame(40, $batch->fresh()->stok_saat_ini);
++    }
++
++    public function test_catat_hasil_hitung_menolak_stok_fisik_negatif(): void
++    {
++        BatchObat::factory()->create();
++        $service = app(StokOpnameService::class);
++        $user = $this->gudangUser();
++        $opname = $service->mulaiOpname($user->id);
++
++        $this->expectException(InvalidArgumentException::class);
++        $service->catatHasilHitung($opname->detail->first()->id, -1, $user->id);
++    }
++}
+-- 
+2.43.0
+

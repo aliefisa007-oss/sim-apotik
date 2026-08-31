@@ -16,13 +16,13 @@ class KategoriObatTest extends TestCase
     {
         $kategori = KategoriObat::factory()->create();
 
+        $data = ['nama' => $kategori->nama, 'parent_id' => $kategori->id];
+
         $request = new StoreKategoriObatRequest();
         $request->setRouteResolver(fn () => $this->fakeRoute($kategori));
+        $request->merge($data);
 
-        $validator = Validator::make(
-            ['nama' => $kategori->nama, 'parent_id' => $kategori->id],
-            $request->rules()
-        );
+        $validator = Validator::make($data, $request->rules());
         $request->withValidator($validator);
 
         $this->assertTrue($validator->fails());
@@ -36,13 +36,13 @@ class KategoriObatTest extends TestCase
         $child = KategoriObat::factory()->create(['parent_id' => $parent->id]);
 
         // Attempting to set grandparent's parent to child would create a cycle.
+        $data = ['nama' => $grandparent->nama, 'parent_id' => $child->id];
+
         $request = new StoreKategoriObatRequest();
         $request->setRouteResolver(fn () => $this->fakeRoute($grandparent));
+        $request->merge($data);
 
-        $validator = Validator::make(
-            ['nama' => $grandparent->nama, 'parent_id' => $child->id],
-            $request->rules()
-        );
+        $validator = Validator::make($data, $request->rules());
         $request->withValidator($validator);
 
         $this->assertTrue($validator->fails());
@@ -53,8 +53,21 @@ class KategoriObatTest extends TestCase
     {
         return new class($kategori) {
             public function __construct(private KategoriObat $kategori) {}
-            public function __invoke() { return $this->kategori; }
-            public function __get($name) { return $this->kategori->{$name} ?? null; }
+
+            public function __invoke(): KategoriObat
+            {
+                return $this->kategori;
+            }
+
+            public function __get(string $name): mixed
+            {
+                return $this->kategori->{$name} ?? null;
+            }
+
+            public function parameter(string $name, mixed $default = null): mixed
+            {
+                return $this->kategori;
+            }
         };
     }
 }

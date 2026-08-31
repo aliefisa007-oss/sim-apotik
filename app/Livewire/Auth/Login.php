@@ -42,7 +42,7 @@ class Login extends Component
         }
 
         RateLimiter::clear($throttleKey);
-        request()->session()->regenerate();
+        session()->regenerate();
 
         $this->redirect(route('dashboard'), navigate: true);
     }

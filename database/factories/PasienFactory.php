@@ -12,7 +12,7 @@ class PasienFactory extends Factory
     public function definition(): array
     {
         return [
-            'no_rm' => $this->faker->optional()->unique()->bothify('RM-######'),
+            'no_rm' => $this->faker->boolean(70) ? $this->faker->unique()->bothify('RM-######') : null,
             'nama_pasien' => $this->faker->name(),
             'tanggal_lahir' => $this->faker->optional()->date(),
             'jenis_kelamin' => $this->faker->randomElement(['L', 'P']),

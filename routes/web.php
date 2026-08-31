@@ -27,4 +27,11 @@ Route::middleware('auth')->group(function () {
 
 require __DIR__.'/auth.php';
 require __DIR__.'/dashboard-laporan.php';
+require __DIR__.'/hja.php';
+require __DIR__.'/inventory.php';
+require __DIR__.'/master-data.php';
 require __DIR__.'/pengguna.php';
+require __DIR__.'/penjualan.php';
+require __DIR__.'/purchasing.php';
+require __DIR__.'/resep.php';
+require __DIR__.'/stok-opname.php';

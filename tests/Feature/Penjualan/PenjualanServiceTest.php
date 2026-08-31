@@ -71,7 +71,7 @@ class PenjualanServiceTest extends TestCase
 
     public function test_split_dua_batch_menghasilkan_dua_baris_detail_dengan_harga_masing_masing(): void
     {
-        $obat = Obat::factory()->create();
+        $obat = Obat::factory()->create(['golongan' => Obat::GOLONGAN_BEBAS]);
         $batchMurah = BatchObat::factory()->for($obat)->expiringInDays(5)->create(['stok_saat_ini' => 5, 'stok_awal' => 5, 'harga_jual' => 5000]);
         $batchMahal = BatchObat::factory()->for($obat)->expiringInDays(15)->create(['stok_saat_ini' => 50, 'stok_awal' => 50, 'harga_jual' => 6000]);
         $kasir = User::factory()->create();
@@ -92,7 +92,7 @@ class PenjualanServiceTest extends TestCase
 
     public function test_stok_tidak_cukup_rollback_tidak_ada_transaksi_tersimpan(): void
     {
-        $obat = Obat::factory()->create();
+        $obat = Obat::factory()->create(['golongan' => Obat::GOLONGAN_BEBAS]);
         BatchObat::factory()->for($obat)->create(['stok_saat_ini' => 2, 'stok_awal' => 2, 'harga_jual' => 5000]);
         $kasir = User::factory()->create();
 
@@ -113,7 +113,7 @@ class PenjualanServiceTest extends TestCase
 
     public function test_harga_jual_belum_diatur_ditolak(): void
     {
-        $obat = Obat::factory()->create();
+        $obat = Obat::factory()->create(['golongan' => Obat::GOLONGAN_BEBAS]);
         BatchObat::factory()->for($obat)->create(['stok_saat_ini' => 10, 'stok_awal' => 10, 'harga_jual' => null]);
         $kasir = User::factory()->create();
 
@@ -129,7 +129,7 @@ class PenjualanServiceTest extends TestCase
 
     public function test_kartu_stok_tercatat_dengan_referensi_transaksi(): void
     {
-        $obat = Obat::factory()->create();
+        $obat = Obat::factory()->create(['golongan' => Obat::GOLONGAN_BEBAS]);
         $batch = BatchObat::factory()->for($obat)->create(['stok_saat_ini' => 10, 'stok_awal' => 10, 'harga_jual' => 5000]);
         $kasir = User::factory()->create();
 
@@ -151,7 +151,7 @@ class PenjualanServiceTest extends TestCase
 
     public function test_void_mengembalikan_stok_dan_tidak_menghapus_transaksi(): void
     {
-        $obat = Obat::factory()->create();
+        $obat = Obat::factory()->create(['golongan' => Obat::GOLONGAN_BEBAS]);
         $batch = BatchObat::factory()->for($obat)->create(['stok_saat_ini' => 10, 'stok_awal' => 10, 'harga_jual' => 5000]);
         $kasir = User::factory()->create();
         $service = app(PenjualanService::class);

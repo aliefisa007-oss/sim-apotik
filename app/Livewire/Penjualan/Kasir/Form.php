@@ -33,7 +33,17 @@ class Form extends Component
     public array $cart = [];
 
     public string $metodeBayar = 'tunai';
-    public ?float $jumlahBayar = null;
+
+    /**
+     * Sengaja TANPA tipe ketat (bukan ?float). wire:model.live mengirim
+     * request tiap keystroke, termasuk saat angka masih "setengah jadi"
+     * (mis. "10." sebelum jadi "10.5") — string begitu tidak bisa di-cast
+     * otomatis ke float dan akan membuat Livewire error 500 di tengah
+     * pengetikan. Di-cast ke float manual hanya saat benar-benar dipakai
+     * (lihat kembalianEstimasi & checkout()).
+     */
+    public $jumlahBayar = null;
+
     public ?int $apotekerApprovalId = null;
 
     public bool $showPaymentModal = false;
@@ -186,11 +196,11 @@ class Form extends Component
 
     public function getKembalianEstimasiProperty(): ?float
     {
-        if ($this->metodeBayar !== 'tunai' || $this->jumlahBayar === null) {
+        if ($this->metodeBayar !== 'tunai' || $this->jumlahBayar === null || $this->jumlahBayar === '' || !is_numeric($this->jumlahBayar)) {
             return null;
         }
 
-        return max(0, $this->jumlahBayar - $this->totalEstimasi);
+        return max(0, (float) $this->jumlahBayar - $this->totalEstimasi);
     }
 
     public function getButuhApprovalProperty(): bool
@@ -218,12 +228,14 @@ class Form extends Component
             ->values()
             ->toArray();
 
+        $jumlahBayar = is_numeric($this->jumlahBayar) ? (float) $this->jumlahBayar : null;
+
         try {
             $transaksi = $service->createSale(
                 items: $items,
                 metodeBayar: $this->metodeBayar,
                 kasirId: auth()->id(),
-                jumlahBayar: $this->jumlahBayar,
+                jumlahBayar: $jumlahBayar,
                 apotekerApprovalId: $this->apotekerApprovalId,
                 resepId: $this->resepId,
             );
@@ -242,7 +254,10 @@ class Form extends Component
             return;
         }
 
-        $this->redirectRoute('penjualan.struk', $transaksi, navigate: true);
+        // navigate:true sengaja dimatikan — SPA navigation Livewire sempat
+        // membekukan frame modal yang masih terbuka (blur nyangkut) saat
+        // transisi ke halaman struk. Full reload lebih aman pasca-transaksi.
+        $this->redirectRoute('penjualan.struk', $transaksi);
     }
 
     public function render()

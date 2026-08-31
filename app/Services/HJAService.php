@@ -56,11 +56,11 @@ class HJAService
         $diskonPersen = (float) ($input['diskon_persen'] ?? 0);
         $taxPercent = (float) ($input['tax_percent'] ?? $config->default_tax_percent);
         $hargaTermasukPajak = (bool) ($input['harga_termasuk_pajak'] ?? $config->harga_beli_termasuk_pajak_default);
-        $metode = $input['metode'] ?? $config->default_metode;
+        $metode = (string) ($input['metode'] ?? $config->default_metode ?? self::METODE_MARKUP);
         $persen = (float) ($input['persen_markup_margin'] ?? (
             $metode === self::METODE_MARGIN ? $config->default_margin_percent : $config->default_markup_percent
         ));
-        $roundingMethod = $input['rounding_method'] ?? $config->rounding_method;
+        $roundingMethod = (string) ($input['rounding_method'] ?? $config->rounding_method ?? self::ROUNDING_ROUND);
         $roundingIncrement = (int) ($input['rounding_increment'] ?? $config->rounding_increment);
 
         $this->validateInputs($hargaFaktur, $diskonPersen, $taxPercent, $metode, $persen, $roundingIncrement);

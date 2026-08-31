@@ -44,19 +44,31 @@ class Form extends Component
     /**
      * Breakdown live — dihitung ulang setiap render dari input saat ini.
      * Tidak menyimpan apa pun; murni untuk preview sebelum user menekan Simpan.
+     *
+     * Method biasa (bukan computed property) — dipanggil sebagai
+     * $this->breakdown() di Blade untuk menghindari bug wrapper
+     * computed property Livewire pada versi ini.
      */
-    public function getBreakdownProperty(): ?array
+    public function breakdown(): ?array
     {
+        $diskonPersen = $this->diskon_persen;
+        $taxPercent = $this->tax_percent;
+        $hargaTermasukPajak = $this->harga_termasuk_pajak;
+        $metode = $this->metode;
+        $persenMarkupMargin = $this->persen_markup_margin;
+        $roundingMethod = $this->rounding_method;
+        $roundingIncrement = $this->rounding_increment;
+
         try {
             return app(HJAService::class)->calculate([
                 'harga_faktur' => (float) $this->batch->harga_beli,
-                'diskon_persen' => $this->diskon_persen,
-                'tax_percent' => $this->tax_percent,
-                'harga_termasuk_pajak' => $this->harga_termasuk_pajak,
-                'metode' => $this->metode,
-                'persen_markup_margin' => $this->persen_markup_margin,
-                'rounding_method' => $this->rounding_method,
-                'rounding_increment' => $this->rounding_increment,
+                'diskon_persen' => $diskonPersen,
+                'tax_percent' => $taxPercent,
+                'harga_termasuk_pajak' => $hargaTermasukPajak,
+                'metode' => $metode,
+                'persen_markup_margin' => $persenMarkupMargin,
+                'rounding_method' => $roundingMethod,
+                'rounding_increment' => $roundingIncrement,
             ]);
         } catch (\InvalidArgumentException $e) {
             $this->addError('preview', $e->getMessage());

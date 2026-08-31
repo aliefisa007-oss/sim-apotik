@@ -1,7 +1,12 @@
 <div>
+    <a href="{{ route('batch.index', ['obat_id' => $batch->obat_id]) }}" wire:navigate class="mb-4 inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800">
+        ← Kembali ke Batch Obat
+    </a>
+
     @if (session('success'))
-        <div class="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800">
-            {{ session('success') }}
+        <div class="mb-4 flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800">
+            <span>{{ session('success') }}</span>
+            <a href="{{ route('batch.index', ['obat_id' => $batch->obat_id]) }}" wire:navigate class="font-medium underline">Kembali ke daftar batch</a>
         </div>
     @endif
 
@@ -76,8 +81,8 @@
         <div class="rounded-md border border-slate-200 p-4">
             <h2 class="mb-3 text-sm font-semibold text-slate-700">Breakdown Kalkulasi</h2>
 
-            @if ($this->breakdown)
-                @php $b = $this->breakdown; @endphp
+            @php $b = $this->breakdown(); @endphp
+            @if ($b)
                 <dl class="space-y-2 text-sm">
                     <div class="flex justify-between"><dt class="text-slate-500">Harga Faktur</dt><dd class="font-mono text-slate-700">Rp{{ number_format($b['harga_faktur'], 0, ',', '.') }}</dd></div>
                     <div class="flex justify-between"><dt class="text-slate-500">Diskon ({{ $b['diskon_persen'] }}%)</dt><dd class="font-mono text-slate-500">- Rp{{ number_format($b['harga_faktur'] - $b['harga_netto'], 0, ',', '.') }}</dd></div>

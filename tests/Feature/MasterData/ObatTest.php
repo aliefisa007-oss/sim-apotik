@@ -2,12 +2,16 @@
 
 namespace Tests\Feature\MasterData;
 
+use App\Livewire\MasterData\Obat\Form;
 use App\Models\KategoriObat;
 use App\Models\Obat;
 use App\Models\Satuan;
+use App\Models\User;
 use App\Services\ObatService;
+use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use InvalidArgumentException;
+use Livewire\Livewire;
 use Tests\TestCase;
 
 class ObatTest extends TestCase
@@ -29,6 +33,16 @@ class ObatTest extends TestCase
             'butuh_resep' => false,
             'is_active' => true,
         ], $overrides);
+    }
+
+    private function owner(): User
+    {
+        $this->seed(RoleSeeder::class);
+
+        $owner = User::factory()->create(['is_active' => true]);
+        $owner->assignRole('owner');
+
+        return $owner;
     }
 
     public function test_creating_obat_generates_sequential_kode_obat(): void
@@ -115,14 +129,29 @@ class ObatTest extends TestCase
 
     public function test_barcode_must_be_unique_when_present(): void
     {
+        $this->actingAs($this->owner());
+
         Obat::factory()->create(['barcode' => '1234567890123']);
 
-        $response = $this->postJson(route('obat.store'), array_merge(
-            $this->baseData(['barcode' => '1234567890123']),
-            ['satuan' => [['satuan_id' => Satuan::factory()->create()->id, 'konversi_ke_satuan_dasar' => 1, 'is_satuan_dasar' => true, 'is_satuan_jual_default' => true]]]
-        ));
+        $kategori = KategoriObat::factory()->create();
+        $satuan = Satuan::factory()->create();
 
-        $response->assertSessionHasErrors('barcode');
+        Livewire::test(Form::class)
+            ->set('nama_obat', 'Obat Uji')
+            ->set('kategori_id', $kategori->id)
+            ->set('golongan', Obat::GOLONGAN_BEBAS)
+            ->set('barcode', '1234567890123')
+            ->set('stok_minimum', 10)
+            ->set('satuanRows', [
+                [
+                    'satuan_id' => $satuan->id,
+                    'konversi_ke_satuan_dasar' => 1,
+                    'is_satuan_dasar' => true,
+                    'is_satuan_jual_default' => true,
+                ],
+            ])
+            ->call('save')
+            ->assertHasErrors('barcode');
     }
 
     public function test_deactivate_sets_is_active_false(): void
