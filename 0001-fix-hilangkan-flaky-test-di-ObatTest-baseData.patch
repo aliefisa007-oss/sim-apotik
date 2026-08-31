@@ -1,0 +1,45 @@
+From 1928c041f092ec179babbb80665c7b7650386a7b Mon Sep 17 00:00:00 2001
+From: Claude <claude@local>
+Date: Mon, 31 Aug 2026 08:58:16 +0000
+Subject: [PATCH] fix: hilangkan flaky test di ObatTest::baseData
+
+baseData() selalu bikin Satuan baru lewat factory random meskipun
+satuan_dasar_id sudah di-override si test (mis. test_create_persists_unit_conversions
+override dengan 'Tablet'). SatuanFactory pakai faker->unique()->randomElement()
+dari pool cuma 9 nama, jadi row acak ini kadang nabrak nama yang sudah
+dipakai eksplisit di test yang sama -> UniqueConstraintViolationException,
+gagal ngga konsisten (flaky).
+
+Fix: baseData() cuma bikin Satuan baru kalau satuan_dasar_id belum
+di-override. Tidak ada perubahan pada kode aplikasi, murni test helper.
+
+Catatan: ini bug lama, tidak berhubungan dengan patch redesign UI
+sebelumnya (sidebar/topbar, dashboard, toast).
+---
+ tests/Feature/MasterData/ObatTest.php | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/tests/Feature/MasterData/ObatTest.php b/tests/Feature/MasterData/ObatTest.php
+index e8a7d6c..453261f 100644
+--- a/tests/Feature/MasterData/ObatTest.php
++++ b/tests/Feature/MasterData/ObatTest.php
+@@ -21,14 +21,14 @@ class ObatTest extends TestCase
+     private function baseData(array $overrides = []): array
+     {
+         $kategori = KategoriObat::factory()->create();
+-        $satuanDasar = Satuan::factory()->create();
++        $satuanDasarId = $overrides['satuan_dasar_id'] ?? Satuan::factory()->create()->id;
+ 
+         return array_merge([
+             'nama_obat' => 'Obat Uji',
+             'nama_generik' => 'Generik Uji',
+             'kategori_id' => $kategori->id,
+             'golongan' => Obat::GOLONGAN_BEBAS,
+-            'satuan_dasar_id' => $satuanDasar->id,
++            'satuan_dasar_id' => $satuanDasarId,
+             'barcode' => null,
+             'butuh_resep' => false,
+             'is_active' => true,
+-- 
+2.43.0
+

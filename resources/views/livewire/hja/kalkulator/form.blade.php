@@ -3,12 +3,7 @@
         ← Kembali ke Batch Obat
     </a>
 
-    @if (session('success'))
-        <div class="mb-4 flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800">
-            <span>{{ session('success') }}</span>
-            <a href="{{ route('batch.index', ['obat_id' => $batch->obat_id]) }}" wire:navigate class="font-medium underline">Kembali ke daftar batch</a>
-        </div>
-    @endif
+    <x-toast />
 
     <h1 class="mb-1 text-lg font-semibold text-slate-800">Kalkulator HJA</h1>
     <p class="mb-4 text-sm text-slate-500">

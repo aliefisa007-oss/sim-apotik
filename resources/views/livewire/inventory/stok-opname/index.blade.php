@@ -1,10 +1,5 @@
 <div>
-    @if (session('success'))
-        <div class="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800">{{ session('success') }}</div>
-    @endif
-    @if (session('error'))
-        <div class="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">{{ session('error') }}</div>
-    @endif
+    <x-toast />
 
     <div class="mb-4 flex items-center justify-between">
         <h1 class="text-lg font-semibold text-slate-800">Stok Opname</h1>

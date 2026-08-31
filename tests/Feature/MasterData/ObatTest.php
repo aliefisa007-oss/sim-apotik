@@ -21,14 +21,14 @@ class ObatTest extends TestCase
     private function baseData(array $overrides = []): array
     {
         $kategori = KategoriObat::factory()->create();
-        $satuanDasar = Satuan::factory()->create();
+        $satuanDasarId = $overrides['satuan_dasar_id'] ?? Satuan::factory()->create()->id;
 
         return array_merge([
             'nama_obat' => 'Obat Uji',
             'nama_generik' => 'Generik Uji',
             'kategori_id' => $kategori->id,
             'golongan' => Obat::GOLONGAN_BEBAS,
-            'satuan_dasar_id' => $satuanDasar->id,
+            'satuan_dasar_id' => $satuanDasarId,
             'barcode' => null,
             'butuh_resep' => false,
             'is_active' => true,

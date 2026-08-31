@@ -1,9 +1,5 @@
 <div>
-    @if (session('success'))
-        <div class="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800">
-            {{ session('success') }}
-        </div>
-    @endif
+    <x-toast />
 
     <h1 class="mb-4 text-lg font-semibold text-slate-800">Pengaturan HJA (Default)</h1>
     <p class="mb-4 text-xs text-slate-500">
