@@ -12,20 +12,24 @@
         @vite(['resources/css/app.css', 'resources/js/app.js'])
     </head>
     <body class="font-sans antialiased">
-        <div class="min-h-screen bg-slate-50">
-            @include('layouts.navigation')
+        <div x-data="{ sidebarOpen: false }" class="min-h-screen bg-slate-50">
+            @include('layouts.sidebar')
 
-            @isset($header)
-                <header class="border-b border-slate-200 bg-white">
-                    <div class="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
-                        {{ $header }}
-                    </div>
-                </header>
-            @endisset
+            <div class="lg:pl-64">
+                @include('layouts.topbar')
 
-            <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-                {{ $slot }}
-            </main>
+                @isset($header)
+                    <header class="border-b border-slate-200 bg-white">
+                        <div class="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
+                            {{ $header }}
+                        </div>
+                    </header>
+                @endisset
+
+                <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+                    {{ $slot }}
+                </main>
+            </div>
         </div>
     </body>
 </html>
