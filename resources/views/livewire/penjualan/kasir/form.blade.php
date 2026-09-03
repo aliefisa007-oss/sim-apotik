@@ -67,14 +67,27 @@
                         @foreach ($searchResults as $i => $result)
                             <button
                                 type="button"
+                                wire:key="search-{{ $result['id'] }}"
                                 x-ref="result-{{ $i }}"
                                 data-obat-id="{{ $result['id'] }}"
                                 wire:click="addToCart({{ $result['id'] }})"
+                                @if(($result['stok_tersedia'] ?? 0) <= 0) disabled @endif
                                 :class="highlightedIndex === {{ $i }} ? 'bg-slate-100' : ''"
-                                class="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm hover:bg-slate-50"
+                                class="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm hover:bg-slate-50
+                                       disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white"
                             >
                                 <span>{{ $result['nama_obat'] }} <span class="text-xs text-slate-400">({{ $result['kode_obat'] }})</span></span>
-                                <x-badge-golongan :golongan="$result['golongan']" />
+                                <span class="flex items-center gap-2">
+                                    <span @class([
+                                        'text-xs px-2 py-0.5 rounded-full font-medium',
+                                        'bg-red-100 text-red-700'     => ($result['stok_tersedia'] ?? 0) <= 0,
+                                        'bg-amber-100 text-amber-700' => ($result['stok_tersedia'] ?? 0) > 0 && ($result['stok_tersedia'] ?? 0) <= ($result['stok_minimum'] ?? 10),
+                                        'bg-slate-100 text-slate-600' => ($result['stok_tersedia'] ?? 0) > ($result['stok_minimum'] ?? 10),
+                                    ])>
+                                        Stok: {{ $result['stok_tersedia'] ?? 0 }}
+                                    </span>
+                                    <x-badge-golongan :golongan="$result['golongan']" />
+                                </span>
                             </button>
                         @endforeach
                     </div>

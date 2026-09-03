@@ -2,38 +2,32 @@
 
 namespace App\Services;
 
-use App\Exceptions\ApprovalRequiredException;
 use App\Exceptions\HargaJualBelumDiaturException;
 use App\Exceptions\ResepAlreadyDispensedException;
-use App\Exceptions\ResepMismatchException;
 use App\Exceptions\ResepNotVerifiedException;
 use App\Models\BatchObat;
 use App\Models\DetailTransaksi;
 use App\Models\KartuStok;
-use App\Models\Obat;
 use App\Models\Resep;
 use App\Models\TransaksiPenjualan;
-use App\Models\User;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 /**
  * Orkestrator penjualan. Menggabungkan FEFOService (alokasi & potong stok)
- * dan validasi approval golongan obat (§19) dalam satu transaction atomic.
+ * dalam satu transaction atomic.
  *
  * Business logic di sini dipakai identik oleh Livewire kasir (Blade) maupun
  * API nanti (§55) — jangan duplikasi logic checkout di tempat lain.
  *
- * PHASE 6: mekanisme approval (kolom apoteker_approval_id, alur "pilih
- * apoteker saat checkout") TIDAK diganti — tetap sama seperti Phase 4.
- * Yang berubah: kalau transaksi terhubung ke resep_id, apoteker_approval_id
- * di-DERIVE otomatis dari Resep::apoteker_verifikasi_id (resep yang sudah
- * diverifikasi = approval-nya sudah ada), bukan dipilih bebas lagi oleh
- * kasir. Jalur walk-in TANPA resep (mis. golongan keras dijual tanpa resep
- * tercatat di sistem) tetap memakai pilih-apoteker-bebas seperti sebelumnya
- * — ini REGULATORY ASSUMPTION, TO BE VERIFIED apakah praktik ini masih mau
- * dipertahankan atau harus diwajibkan selalu via resep.
+ * APPROVAL GOLONGAN DIHAPUS (keputusan bisnis, bukan bug): kasir boleh
+ * menjual semua golongan obat (termasuk keras/narkotika/psikotropika)
+ * tanpa approval apoteker. `apoteker_approval_id` tetap ada di skema dan
+ * tetap diisi otomatis untuk transaksi yang lewat resep (di-derive dari
+ * Resep::apoteker_verifikasi_id), tapi untuk walk-in tanpa resep kolom ini
+ * akan null dan itu valid. TO BE VERIFIED (regulasi): keputusan ini
+ * menghapus jejak audit siapa yang menyetujui penjualan golongan
+ * restricted — pastikan ini sudah disadari konsekuensinya di luar sistem.
  */
 class PenjualanService
 {
@@ -59,8 +53,6 @@ class PenjualanService
         }
 
         return DB::transaction(function () use ($items, $metodeBayar, $kasirId, $jumlahBayar, $apotekerApprovalId, $resepId, $pasienId) {
-            $obatList = Obat::whereIn('id', collect($items)->pluck('obat_id'))->get()->keyBy('id');
-
             $resep = null;
             if ($resepId) {
                 // lockForUpdate: cegah dua transaksi konkuren dispensing dari
@@ -70,8 +62,6 @@ class PenjualanService
                 $pasienId = $pasienId ?? $resep->pasien_id;
                 $apotekerApprovalId = $resep->apoteker_verifikasi_id;
             }
-
-            $this->assertApprovalIfNeeded($obatList, $items, $apotekerApprovalId, $resep);
 
             // Header dibuat dulu (total=0 sementara) supaya setiap baris
             // kartu_stok yang ditulis FEFOService punya referensi transaksi
@@ -199,51 +189,6 @@ class PenjualanService
 
             return $transaksi->fresh('detail');
         });
-    }
-
-    /**
-     * @param Collection<int, Obat> $obatList
-     * @param array<int, array{obat_id: int, jumlah: int}> $items
-     */
-    private function assertApprovalIfNeeded(Collection $obatList, array $items, ?int $apotekerApprovalId, ?Resep $resep): void
-    {
-        $restrictedItems = collect($items)->filter(function ($item) use ($obatList) {
-            $obat = $obatList->get($item['obat_id']);
-
-            return $obat && $obat->requiresApprovalGolongan();
-        })->values();
-
-        if ($restrictedItems->isEmpty()) {
-            return;
-        }
-
-        // Kalau resep dipakai, setiap item golongan-restricted WAJIB ada di
-        // detail_resep dan tidak melebihi sisa — mencegah approval resep
-        // "dipinjam" untuk item lain yang tidak diresepkan.
-        if ($resep) {
-            foreach ($restrictedItems as $item) {
-                $obat = $obatList->get($item['obat_id']);
-                $detailLine = $resep->detail->firstWhere('obat_id', $item['obat_id']);
-
-                if (!$detailLine) {
-                    throw ResepMismatchException::obatTidakDiresepkan($obat->nama_obat);
-                }
-
-                if ($item['jumlah'] > $detailLine->sisaDiresepkan()) {
-                    throw ResepMismatchException::melebihiSisaResep($obat->nama_obat, $detailLine->sisaDiresepkan());
-                }
-            }
-        }
-
-        if (!$apotekerApprovalId) {
-            $namaObatPertama = $obatList->get($restrictedItems->first()['obat_id'])->nama_obat;
-            throw ApprovalRequiredException::forObat($namaObatPertama);
-        }
-
-        $apoteker = User::find($apotekerApprovalId);
-        if (!$apoteker || !$apoteker->hasRole('apoteker')) {
-            throw ApprovalRequiredException::invalidApoteker();
-        }
     }
 
     private function assertResepUsable(Resep $resep): void

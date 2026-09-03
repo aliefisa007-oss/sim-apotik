@@ -67,14 +67,22 @@ class Form extends Component
             return;
         }
 
-        $this->searchResults = Obat::where('is_active', true)
+        $this->searchResults = Obat::query()
+            ->where('is_active', true)
             ->where(function ($q) {
                 $q->where('nama_obat', 'like', "%{$this->search}%")
                     ->orWhere('nama_generik', 'like', "%{$this->search}%")
                     ->orWhere('barcode', $this->search); // exact match utamakan barcode scanner
             })
+            // Total stok lintas batch aktif & belum kadaluarsa, 1 query
+            // agregat (bukan lazy-load per baris) — biar kasir lihat sisa
+            // stok sebelum nambah ke keranjang.
+            ->withSum(['batchObat as stok_tersedia' => function ($q) {
+                $q->where('status', \App\Models\BatchObat::STATUS_AKTIF)
+                    ->where('tanggal_kadaluarsa', '>', now()->toDateString());
+            }], 'stok_saat_ini')
             ->limit(8)
-            ->get(['id', 'kode_obat', 'nama_obat', 'golongan'])
+            ->get(['id', 'kode_obat', 'nama_obat', 'golongan', 'stok_minimum'])
             ->toArray();
     }
 
@@ -84,7 +92,7 @@ class Form extends Component
      */
     public function addToCart(int $obatId): void
     {
-        $obat = Obat::with('obatSatuan')->findOrFail($obatId);
+        $obat = Obat::findOrFail($obatId);
 
         if (isset($this->cart[$obatId])) {
             $this->cart[$obatId]['jumlah']++;
@@ -142,6 +150,24 @@ class Form extends Component
         $this->resepNoTampil = $resep->no_resep;
         $this->resepPasienTampil = $resep->pasien->nama_pasien;
 
+        $obatIds = $resep->detail->pluck('obat_id')->unique()->values();
+
+        // Ambil semua batch eligible untuk SEMUA obat di resep dalam 1
+        // query (dulu: 1 query per baris resep di dalam loop = N+1),
+        // lalu ambil batch kadaluarsa-terdekat per obat_id di PHP. Tidak
+        // bisa pakai scope eligibleForFefo() langsung karena scope itu
+        // menerima 1 obat_id, bukan whereIn — kondisinya direplikasi
+        // manual di sini, harus tetap sinkron kalau scope aslinya berubah.
+        $batchTerdekatPerObat = \App\Models\BatchObat::query()
+            ->whereIn('obat_id', $obatIds)
+            ->where('status', \App\Models\BatchObat::STATUS_AKTIF)
+            ->where('stok_saat_ini', '>', 0)
+            ->where('tanggal_kadaluarsa', '>', now()->toDateString())
+            ->orderBy('tanggal_kadaluarsa')
+            ->get()
+            ->groupBy('obat_id')
+            ->map(fn ($batches) => $batches->first());
+
         foreach ($resep->detail as $line) {
             $sisa = $line->sisaDiresepkan();
             if ($sisa <= 0) {
@@ -149,9 +175,7 @@ class Form extends Component
             }
 
             $obat = $line->obat;
-            $batchPertama = \App\Models\BatchObat::eligibleForFefo($obat->id)
-                ->orderBy('tanggal_kadaluarsa')
-                ->first();
+            $batchPertama = $batchTerdekatPerObat->get($obat->id);
 
             $this->cart[$obat->id] = [
                 'obat_id' => $obat->id,
